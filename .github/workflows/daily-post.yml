@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       post: ${{ steps.gen.outputs.post }}
+      candidates: ${{ steps.gen.outputs.candidates }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,11 +46,14 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          python scout.py --generate-only post.txt --report candidates.md
+          python scout.py --generate-only post.txt --report candidates.md --candidates-out candidates.json
           {
             echo "post<<POST_EOF"
             cat post.txt
             echo "POST_EOF"
+            echo "candidates<<CAND_EOF"
+            cat candidates.json
+            echo "CAND_EOF"
           } >> "$GITHUB_OUTPUT"
           {
             echo "## Proposed post"
@@ -73,9 +77,68 @@ jobs:
             git push
           fi
 
-  publish:
+  approve:
     needs: generate
     if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.tg.outputs.status }}
+      post: ${{ steps.tg.outputs.post }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Ask on Telegram
+        id: tg
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CANDIDATES_JSON: ${{ needs.generate.outputs.candidates }}
+        run: |
+          printf '%s' "$CANDIDATES_JSON" > candidates.json
+          python tg_approve.py --candidates candidates.json
+
+  publish-telegram:
+    needs: approve
+    if: ${{ needs.approve.outputs.status == 'chosen' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Publish picked post
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          POST_TEXT: ${{ needs.approve.outputs.post }}
+        run: python scout.py -m "$POST_TEXT"
+
+      - name: Commit post history
+        run: |
+          if [ -n "$(git status --porcelain posted.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add posted.jsonl
+            git commit -m "log: record daily post"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
+
+  publish:
+    needs: [generate, approve]
+    if: ${{ needs.approve.outputs.status == 'timeout' || needs.approve.outputs.status == 'unconfigured' }}
     runs-on: ubuntu-latest
     environment: approve-post
     steps:

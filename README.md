@@ -24,10 +24,17 @@ Posts to X (x.com) two ways:
    performers. A weekly job (`weekly-review.yml`, Sundays) has the LLM write
    an "editor's memo" (`memo.md`) from the data — concrete directives that
    steer future posts.
-2. **publish** — waits for manual approval (the `approve-post` environment).
-   You get a GitHub notification, read the post in the run summary, and
-   Approve to publish or Reject to skip that day. Published posts are logged
-   to `posted.jsonl` (used to avoid repeating ideas).
+2. **approve** — if `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets are
+   set, the bot messages you the top 3 candidates with buttons: tap 1/2/3 to
+   post that one, or "skip today". Setup: create a bot with @BotFather, add
+   the two secrets (find your chat id with `python tg_approve.py --chat-id`
+   after messaging the bot once).
+3. **publish** — if you picked on Telegram, that candidate is posted
+   directly. If Telegram isn't configured or you didn't answer within 45
+   minutes, it falls back to the GitHub approval gate (the `approve-post`
+   environment): Approve publishes the judge's top pick, Reject skips the
+   day. Published posts are logged to `posted.jsonl` (used to avoid
+   repeating ideas).
 
 It can also be triggered manually from the Actions tab, optionally as a dry
 run (generate only, no publish job).
