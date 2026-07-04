@@ -18,8 +18,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  post:
+  generate:
     runs-on: ubuntu-latest
+    outputs:
+      post: ${{ steps.gen.outputs.post }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,19 +31,47 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Generate and post
+      - name: Generate post
+        id: gen
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          python scout.py --generate-only post.txt
+          {
+            echo "post<<POST_EOF"
+            cat post.txt
+            echo "POST_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Proposed post"
+            echo
+            echo "> $(cat post.txt)"
+            echo
+            echo "Approve the **publish** job to post it, or reject to skip today."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: generate
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: approve-post
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Publish approved post
         env:
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python scout.py --dry-run
-          else
-            python scout.py
-          fi
+          POST_TEXT: ${{ needs.generate.outputs.post }}
+        run: python scout.py -m "$POST_TEXT"
 
       - name: Commit post history
         run: |

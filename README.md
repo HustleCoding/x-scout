@@ -10,12 +10,23 @@ Posts to X (x.com) two ways:
 
 ## Daily automation (scout.py)
 
-`.github/workflows/daily-post.yml` runs `scout.py` every day at 09:17 UTC and
-commits the post to `posted.jsonl` (used to avoid repeating ideas). It can also
-be triggered manually from the Actions tab, optionally as a dry run.
+`.github/workflows/daily-post.yml` runs every day at 09:17 UTC in two stages:
 
-Required repo Actions secrets: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`,
-`X_ACCESS_TOKEN_SECRET`, `OPENROUTER_API_KEY`.
+1. **generate** — writes the proposed post to the run's summary page.
+2. **publish** — waits for manual approval (the `approve-post` environment).
+   You get a GitHub notification, read the post in the run summary, and
+   Approve to publish or Reject to skip that day. Published posts are logged
+   to `posted.jsonl` (used to avoid repeating ideas).
+
+It can also be triggered manually from the Actions tab, optionally as a dry
+run (generate only, no publish job).
+
+One-time setup:
+
+- Repo Actions secrets: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`,
+  `X_ACCESS_TOKEN_SECRET`, `OPENROUTER_API_KEY`.
+- Environment: Settings → Environments → New environment `approve-post` →
+  enable "Required reviewers" and add yourself.
 
 Run locally:
 

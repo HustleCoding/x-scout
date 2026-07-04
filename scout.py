@@ -13,6 +13,7 @@ Usage:
 
     python scout.py --verify           # check X credentials, no post
     python scout.py --dry-run          # generate a post, print it, do not publish
+    python scout.py --generate-only post.txt   # generate and save for later approval
     python scout.py                    # generate and publish
     python scout.py -m "hello"         # publish a specific message
 """
@@ -157,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-m", "--message", help="post this exact text instead of generating one")
     parser.add_argument("--dry-run", action="store_true", help="generate and print, do not publish")
+    parser.add_argument("--generate-only", metavar="FILE", help="generate a post and write it to FILE, do not publish")
     parser.add_argument("--verify", action="store_true", help="check X API credentials, no post")
     args = parser.parse_args(argv)
 
@@ -166,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config()
     text = args.message.strip()[:MAX_CHARS] if args.message else generate_post(cfg)
     print(f"post: {text!r} ({len(text)} chars)")
+    if args.generate_only:
+        Path(args.generate_only).write_text(text + "\n")
+        print(f"generate-only: wrote post to {args.generate_only}")
+        return 0
     if args.dry_run:
         print("dry-run: not publishing")
         return 0
