@@ -149,6 +149,24 @@ def clean_text(text: str) -> str:
     return text[:MAX_CHARS]
 
 
+def hn_front_page(limit: int = 8) -> str:
+    try:
+        ids = requests.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=15
+        ).json()[:limit]
+        titles = []
+        for i in ids:
+            item = requests.get(
+                f"https://hacker-news.firebaseio.com/v0/item/{i}.json", timeout=10
+            ).json()
+            title = (item or {}).get("title", "")
+            if title:
+                titles.append(title)
+    except (requests.RequestException, ValueError):
+        return ""
+    return "\n".join(f"- {t}" for t in titles)
+
+
 def github_activity(cfg: dict, limit: int = 12) -> str:
     user = cfg.get("github_user", "")
     if not user:
@@ -352,7 +370,7 @@ def parse_json_block(raw: str):
     return json.loads(raw[start : end + 1])
 
 
-def generate_candidates(cfg: dict, activity: str = "") -> list[str]:
+def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[str]:
     n = int(cfg.get("candidates", 8))
     topics = random.sample(cfg["topics"], min(3, len(cfg["topics"])))
     history = load_history()
@@ -372,7 +390,13 @@ def generate_candidates(cfg: dict, activity: str = "") -> list[str]:
         if activity
         else ""
     )
-    examples = cfg.get("examples") or []
+    news_block = (
+        f"\nWhat devs are talking about today (hacker news front page; react "
+        f"ONLY if you have a genuine take, never force it):\n{news}\n"
+        if news
+        else ""
+    )
+    examples = (cfg.get("examples") or [])[-10:]
     examples_block = (
         "\nPosts whose taste/rhythm to match (do not copy content):\n"
         + "\n".join(f"- {e}" for e in examples)
@@ -395,7 +419,7 @@ def generate_candidates(cfg: dict, activity: str = "") -> list[str]:
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{activity_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
+        f"{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
@@ -455,7 +479,8 @@ def generate_post(
     candidates_out: str | None = None,
 ) -> str:
     activity = github_activity(cfg)
-    candidates = generate_candidates(cfg, activity)
+    news = hn_front_page()
+    candidates = generate_candidates(cfg, activity, news)
     scored = judge_candidates(cfg, candidates, activity)
     for s in scored[:3]:
         print(f"  [{s['score']:.0f}] {s['text']!r} ({s['reason']})")

@@ -26,9 +26,14 @@ Posts to X (x.com) two ways:
    steer future posts.
 2. **approve** — if `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets are
    set, the bot messages you the top 3 candidates with buttons: tap 1/2/3 to
-   post that one, or "skip today". Setup: create a bot with @BotFather, add
-   the two secrets (find your chat id with `python tg_approve.py --chat-id`
-   after messaging the bot once).
+   post that one, "regenerate" for a fresh batch (up to 3 times), or "skip
+   today". Sending the bot your own text posts that exact text instead and
+   saves it to `examples` in `config.json` as a taste example. Setup: create
+   a bot with @BotFather, add the two secrets (find your chat id with
+   `python tg_approve.py --chat-id` after messaging the bot once).
+   The generation prompt also sees the day's Hacker News front page, so
+   candidates can react to what devs are talking about (only when the model
+   has a genuine take).
 3. **publish** — if you picked on Telegram, that candidate is posted
    directly. If Telegram isn't configured or you didn't answer within 45
    minutes, it falls back to the GitHub approval gate (the `approve-post`
