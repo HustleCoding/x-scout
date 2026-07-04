@@ -98,14 +98,26 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CANDIDATES_JSON: ${{ needs.generate.outputs.candidates }}
         run: |
           printf '%s' "$CANDIDATES_JSON" > candidates.json
           python tg_approve.py --candidates candidates.json
 
+      - name: Commit taste examples and regen candidates
+        run: |
+          if [ -n "$(git status --porcelain config.json candidates.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config.json candidates.jsonl
+            git commit -m "log: record taste example / regenerated candidates"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
+
   publish-telegram:
     needs: approve
-    if: ${{ needs.approve.outputs.status == 'chosen' }}
+    if: ${{ needs.approve.outputs.status == 'chosen' || needs.approve.outputs.status == 'edited' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
