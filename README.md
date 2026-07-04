@@ -1,5 +1,39 @@
 # x-scout
 
+Posts to X (x.com) two ways:
+
+1. **`scout.py`** — generates a post with an LLM (OpenRouter) and publishes it
+   via the X API v2. No browser. Runs automatically once a day via GitHub
+   Actions.
+2. **`post_vague.py`** — the original Selenium/Brave script, still useful for
+   `--find` (search X and open the best post to reply to).
+
+## Daily automation (scout.py)
+
+`.github/workflows/daily-post.yml` runs `scout.py` every day at 09:17 UTC and
+commits the post to `posted.jsonl` (used to avoid repeating ideas). It can also
+be triggered manually from the Actions tab, optionally as a dry run.
+
+Required repo Actions secrets: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`,
+`X_ACCESS_TOKEN_SECRET`, `OPENROUTER_API_KEY`.
+
+Run locally:
+
+```sh
+pip install -r requirements.txt
+python scout.py --verify     # check X credentials, no post
+python scout.py --dry-run    # generate a post, print it, do not publish
+python scout.py              # generate and publish
+python scout.py -m "hello"   # publish a specific message
+```
+
+Tune the voice and subject matter in `config.json` (`persona`, `topics`,
+`model`).
+
+---
+
+# Browser script (post_vague.py)
+
 Posts a vague message to X (x.com) through the local Brave browser.
 
 ## Setup (already done if the `venv/` folder exists)

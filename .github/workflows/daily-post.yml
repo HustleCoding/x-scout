@@ -1,0 +1,54 @@
+name: Daily post
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # 09:17 UTC daily
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Generate but do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Generate and post
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python scout.py --dry-run
+          else
+            python scout.py
+          fi
+
+      - name: Commit post history
+        run: |
+          if [ -n "$(git status --porcelain posted.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add posted.jsonl
+            git commit -m "log: record daily post"
+            git push
+          fi
