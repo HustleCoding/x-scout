@@ -1,0 +1,10 @@
+# Local browser profile holds your X login session. Never commit it.
+brave-profile/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
