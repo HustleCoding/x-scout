@@ -19,6 +19,11 @@ Posts to X (x.com) two ways:
    and writes the winner plus the full scored table to the run's summary
    page. All candidates are logged to `candidates.jsonl`; winners that were
    rejected in past runs are fed back as negative examples.
+   Before generating, the run refreshes engagement metrics for recent posts
+   (`scout.py --update-metrics`) so the prompt can cite your best and worst
+   performers. A weekly job (`weekly-review.yml`, Sundays) has the LLM write
+   an "editor's memo" (`memo.md`) from the data — concrete directives that
+   steer future posts.
 2. **publish** — waits for manual approval (the `approve-post` environment).
    You get a GitHub notification, read the post in the run summary, and
    Approve to publish or Reject to skip that day. Published posts are logged

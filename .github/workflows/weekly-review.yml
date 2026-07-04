@@ -1,0 +1,54 @@
+name: Weekly self-review
+
+on:
+  schedule:
+    - cron: "47 8 * * 0" # Sundays 08:47 UTC, before the daily post
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-post
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Update engagement metrics
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: python scout.py --update-metrics
+
+      - name: Write editor's memo
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python scout.py --self-review
+
+      - name: Show memo in summary
+        run: |
+          if [ -f memo.md ]; then
+            { echo "## Editor's memo"; echo; cat memo.md; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Commit memo and metrics
+        run: |
+          if [ -n "$(git status --porcelain memo.md posted.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add memo.md posted.jsonl
+            git commit -m "log: weekly self-review"
+            git push
+          fi
