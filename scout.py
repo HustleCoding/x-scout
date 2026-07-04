@@ -448,12 +448,19 @@ def judge_candidates(cfg: dict, candidates: list[str], activity: str = "") -> li
     return scored
 
 
-def generate_post(cfg: dict, report_path: str | None = None, log: bool = False) -> str:
+def generate_post(
+    cfg: dict,
+    report_path: str | None = None,
+    log: bool = False,
+    candidates_out: str | None = None,
+) -> str:
     activity = github_activity(cfg)
     candidates = generate_candidates(cfg, activity)
     scored = judge_candidates(cfg, candidates, activity)
     for s in scored[:3]:
         print(f"  [{s['score']:.0f}] {s['text']!r} ({s['reason']})")
+    if candidates_out:
+        Path(candidates_out).write_text(json.dumps(scored[:3], indent=2) + "\n")
     if report_path:
         lines = ["| score | candidate | judge notes |", "|---|---|---|"]
         for s in scored:
@@ -482,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", metavar="FILE", help="write a markdown table of all scored candidates to FILE")
     parser.add_argument("--update-metrics", action="store_true", help="fetch engagement metrics for recent posts, no post")
     parser.add_argument("--self-review", action="store_true", help="write an editor's memo from recent performance, no post")
+    parser.add_argument("--candidates-out", metavar="FILE", help="write the top 3 scored candidates as JSON to FILE")
     args = parser.parse_args(argv)
 
     if args.verify:
@@ -495,7 +503,9 @@ def main(argv: list[str] | None = None) -> int:
     text = (
         args.message.strip()[:MAX_CHARS]
         if args.message
-        else generate_post(cfg, args.report, log=bool(args.generate_only))
+        else generate_post(
+            cfg, args.report, log=bool(args.generate_only), candidates_out=args.candidates_out
+        )
     )
     print(f"post: {text!r} ({len(text)} chars)")
     if args.generate_only:
