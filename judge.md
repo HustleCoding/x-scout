@@ -32,5 +32,9 @@ redistributes them onto a 100-point scale for text-only judging.
   report (-1.5) weights are severe. Punchy is good; insulting a group is not.
 - **Generic take (-0 to -15)**: could have been posted by anyone about
   anything; already said a thousand times.
+- **Fabricated specifics (-0 to -30)**: invented incidents, user counts,
+  durations, or metrics not supported by the author's listed real work.
+  A made-up "47 users saw the bug for 6 hours" is disqualifying; generic
+  observations without fake numbers are fine.
 
 Score = sum of positives + penalties, clamped to 0-100.

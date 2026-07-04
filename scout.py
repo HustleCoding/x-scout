@@ -43,8 +43,8 @@ MAX_CHARS = 280
 HISTORY_CONTEXT = 20
 
 FORMATS = [
-    "a tiny story or specific moment from real work",
-    "a concrete number, result, or before/after",
+    "a tiny story or specific moment from the real work listed",
+    "a concrete number or before/after (only real, verifiable ones)",
     "an unpopular opinion stated plainly",
     "a question-shaped thought (not engagement bait)",
     "a plain observation with no twist",
@@ -237,7 +237,7 @@ def parse_json_block(raw: str):
     return json.loads(raw[start : end + 1])
 
 
-def generate_candidates(cfg: dict) -> list[str]:
+def generate_candidates(cfg: dict, activity: str = "") -> list[str]:
     n = int(cfg.get("candidates", 8))
     topics = random.sample(cfg["topics"], min(3, len(cfg["topics"])))
     history = load_history()
@@ -251,7 +251,6 @@ def generate_candidates(cfg: dict) -> list[str]:
     )
     formats = random.sample(FORMATS, min(n, len(FORMATS)))
     format_lines = "\n".join(f"{i + 1}. {f}" for i, f in enumerate(formats))
-    activity = github_activity(cfg)
     activity_block = (
         f"\nRecent real work (ground posts in these when it fits; a specific "
         f"detail from real work beats any generic take):\n{activity}\n"
@@ -282,7 +281,10 @@ def generate_candidates(cfg: dict) -> list[str]:
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
-        f"No hashtags, no emojis.\n"
+        f"No hashtags, no emojis. NEVER invent specific incidents, numbers, "
+        f"user counts, or events that did not happen; concrete details must "
+        f"come from the real work listed above or be clearly generic. "
+        f"General observations and opinions are fine.\n"
         f'Reply with ONLY a JSON array of {n} strings, like ["post one", ...].'
     )
     raw = llm(cfg, prompt, max_tokens=1500, temperature=1.0, model=cfg.get("writer_model") or cfg["model"])
@@ -292,12 +294,18 @@ def generate_candidates(cfg: dict) -> list[str]:
     return posts
 
 
-def judge_candidates(cfg: dict, candidates: list[str]) -> list[dict]:
+def judge_candidates(cfg: dict, candidates: list[str], activity: str = "") -> list[dict]:
     rubric = JUDGE_PATH.read_text() if JUDGE_PATH.exists() else ""
     numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(candidates))
+    activity_block = (
+        f"\nThe author's listed real work (specifics not traceable to these "
+        f"are fabricated):\n{activity}\n"
+        if activity
+        else ""
+    )
     prompt = (
         f"You judge draft posts for X (twitter) using this rubric:\n\n{rubric}\n\n"
-        f"Persona the posts should fit: {cfg['persona']}\n\n"
+        f"Persona the posts should fit: {cfg['persona']}\n{activity_block}\n"
         f"Candidates:\n{numbered}\n\n"
         f"Score each candidate 0-100 per the rubric. Be harsh on AI tells and "
         f"generic takes. Reply with ONLY a JSON array like "
@@ -323,8 +331,9 @@ def judge_candidates(cfg: dict, candidates: list[str]) -> list[dict]:
 
 
 def generate_post(cfg: dict, report_path: str | None = None, log: bool = False) -> str:
-    candidates = generate_candidates(cfg)
-    scored = judge_candidates(cfg, candidates)
+    activity = github_activity(cfg)
+    candidates = generate_candidates(cfg, activity)
+    scored = judge_candidates(cfg, candidates, activity)
     for s in scored[:3]:
         print(f"  [{s['score']:.0f}] {s['text']!r} ({s['reason']})")
     if report_path:
