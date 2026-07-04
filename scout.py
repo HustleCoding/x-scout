@@ -33,6 +33,7 @@ from requests_oauthlib import OAuth1
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 HISTORY_PATH = ROOT / "posted.jsonl"
+CANDIDATES_LOG_PATH = ROOT / "candidates.jsonl"
 UNSLOP_PATH = ROOT / "unslop.md"
 JUDGE_PATH = ROOT / "judge.md"
 
@@ -41,8 +42,22 @@ OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 MAX_CHARS = 280
 HISTORY_CONTEXT = 20
 
+FORMATS = [
+    "a tiny story or specific moment from real work",
+    "a concrete number, result, or before/after",
+    "an unpopular opinion stated plainly",
+    "a question-shaped thought (not engagement bait)",
+    "a plain observation with no twist",
+    "a lesson learned the hard way",
+    "a small confession or mistake",
+    "a one-liner",
+]
+
 DEFAULT_CONFIG = {
     "model": "deepseek/deepseek-chat",
+    "writer_model": "anthropic/claude-sonnet-4.5",
+    "github_user": "HustleCoding",
+    "examples": [],
     "persona": (
         "An indie hacker and AI engineer who ships small products fast. "
         "Curious, direct, a little dry. Writes in lowercase, no hashtags, "
@@ -133,7 +148,69 @@ def clean_text(text: str) -> str:
     return text[:MAX_CHARS]
 
 
-def llm(cfg: dict, prompt: str, max_tokens: int, temperature: float) -> str:
+def github_activity(cfg: dict, limit: int = 12) -> str:
+    user = cfg.get("github_user", "")
+    if not user:
+        return ""
+    try:
+        resp = requests.get(
+            f"https://api.github.com/users/{user}/events/public",
+            params={"per_page": 30},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        events = resp.json()
+    except requests.RequestException:
+        return ""
+    lines: list[str] = []
+    for e in events:
+        repo = e.get("repo", {}).get("name", "")
+        payload = e.get("payload", {})
+        if e.get("type") == "PushEvent":
+            for c in payload.get("commits", [])[:3]:
+                msg = c.get("message", "").splitlines()[0]
+                if msg:
+                    lines.append(f"commit to {repo}: {msg}")
+        elif e.get("type") == "PullRequestEvent":
+            title = payload.get("pull_request", {}).get("title", "")
+            if title:
+                lines.append(f"PR ({payload.get('action', '')}) in {repo}: {title}")
+        elif e.get("type") == "CreateEvent" and payload.get("ref_type") == "repository":
+            lines.append(f"created repo {repo}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(f"- {l}" for l in lines)
+
+
+def log_candidates(winner: str, scored: list[dict]) -> None:
+    entry = {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "winner": winner,
+        "candidates": [{"text": s["text"], "score": s["score"]} for s in scored],
+    }
+    with CANDIDATES_LOG_PATH.open("a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def rejected_winners(limit: int = 10) -> list[str]:
+    """Winners from past runs that never made it into posted.jsonl."""
+    if not CANDIDATES_LOG_PATH.exists():
+        return []
+    posted = set(load_history(limit=1000))
+    today = datetime.now(timezone.utc).date().isoformat()
+    rejected = []
+    for line in CANDIDATES_LOG_PATH.read_text().strip().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        winner = entry.get("winner", "")
+        if winner and winner not in posted and not entry.get("date", "").startswith(today):
+            rejected.append(winner)
+    return rejected[-limit:]
+
+
+def llm(cfg: dict, prompt: str, max_tokens: int, temperature: float, model: str | None = None) -> str:
     resp = requests.post(
         OPENROUTER_API,
         headers={
@@ -141,7 +218,7 @@ def llm(cfg: dict, prompt: str, max_tokens: int, temperature: float) -> str:
             "Content-Type": "application/json",
         },
         json={
-            "model": cfg["model"],
+            "model": model or cfg["model"],
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -172,18 +249,43 @@ def generate_candidates(cfg: dict) -> list[str]:
         if unslop
         else ""
     )
+    formats = random.sample(FORMATS, min(n, len(FORMATS)))
+    format_lines = "\n".join(f"{i + 1}. {f}" for i, f in enumerate(formats))
+    activity = github_activity(cfg)
+    activity_block = (
+        f"\nRecent real work (ground posts in these when it fits; a specific "
+        f"detail from real work beats any generic take):\n{activity}\n"
+        if activity
+        else ""
+    )
+    examples = cfg.get("examples") or []
+    examples_block = (
+        "\nPosts whose taste/rhythm to match (do not copy content):\n"
+        + "\n".join(f"- {e}" for e in examples)
+        + "\n"
+        if examples
+        else ""
+    )
+    rejected = rejected_winners()
+    rejected_block = (
+        "\nPast drafts the author REJECTED (wrong taste, do not write like these):\n"
+        + "\n".join(f"- {r}" for r in rejected)
+        + "\n"
+        if rejected
+        else ""
+    )
     prompt = (
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
-        f"Today's topics (pick per candidate, vary angles): {', '.join(topics)}\n\n"
+        f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{style}\n"
-        f"Write {n} candidate posts, each under 260 characters. Each should "
-        f"feel like a real thought, not marketing copy, and take a different "
-        f"angle (observation, mild contrarian take, specific scenario, "
-        f"question-shaped thought, ...). No hashtags, no emojis.\n"
+        f"{activity_block}{examples_block}{rejected_block}{style}\n"
+        f"Write {n} candidate posts, each under 260 characters. Use these "
+        f"formats, one per candidate in order:\n{format_lines}\n\n"
+        f"Each should feel like a real thought, not marketing copy. "
+        f"No hashtags, no emojis.\n"
         f'Reply with ONLY a JSON array of {n} strings, like ["post one", ...].'
     )
-    raw = llm(cfg, prompt, max_tokens=1500, temperature=1.0)
+    raw = llm(cfg, prompt, max_tokens=1500, temperature=1.0, model=cfg.get("writer_model") or cfg["model"])
     posts = [clean_text(p) for p in parse_json_block(raw) if isinstance(p, str) and p.strip()]
     if not posts:
         raise SystemExit("generation returned no candidates")
@@ -220,7 +322,7 @@ def judge_candidates(cfg: dict, candidates: list[str]) -> list[dict]:
     return scored
 
 
-def generate_post(cfg: dict, report_path: str | None = None) -> str:
+def generate_post(cfg: dict, report_path: str | None = None, log: bool = False) -> str:
     candidates = generate_candidates(cfg)
     scored = judge_candidates(cfg, candidates)
     for s in scored[:3]:
@@ -230,6 +332,8 @@ def generate_post(cfg: dict, report_path: str | None = None) -> str:
         for s in scored:
             lines.append(f"| {s['score']:.0f} | {s['text']} | {s['reason']} |")
         Path(report_path).write_text("\n".join(lines) + "\n")
+    if log:
+        log_candidates(scored[0]["text"], scored)
     return scored[0]["text"]
 
 
@@ -255,7 +359,11 @@ def main(argv: list[str] | None = None) -> int:
         return verify_credentials()
 
     cfg = load_config()
-    text = args.message.strip()[:MAX_CHARS] if args.message else generate_post(cfg, args.report)
+    text = (
+        args.message.strip()[:MAX_CHARS]
+        if args.message
+        else generate_post(cfg, args.report, log=bool(args.generate_only))
+    )
     print(f"post: {text!r} ({len(text)} chars)")
     if args.generate_only:
         Path(args.generate_only).write_text(text + "\n")

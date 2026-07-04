@@ -54,6 +54,16 @@ jobs:
             cat candidates.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Commit candidates log
+        run: |
+          if [ -n "$(git status --porcelain candidates.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add candidates.jsonl
+            git commit -m "log: record generated candidates"
+            git push
+          fi
+
   publish:
     needs: generate
     if: ${{ !inputs.dry_run }}
@@ -84,5 +94,6 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add posted.jsonl
             git commit -m "log: record daily post"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
             git push
           fi
