@@ -36,7 +36,7 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          python scout.py --generate-only post.txt
+          python scout.py --generate-only post.txt --report candidates.md
           {
             echo "post<<POST_EOF"
             cat post.txt
@@ -48,6 +48,10 @@ jobs:
             echo "> $(cat post.txt)"
             echo
             echo "Approve the **publish** job to post it, or reject to skip today."
+            echo
+            echo "### All candidates (judged against the X algorithm rubric)"
+            echo
+            cat candidates.md
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
