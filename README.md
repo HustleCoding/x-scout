@@ -12,9 +12,13 @@ Posts to X (x.com) two ways:
 
 `.github/workflows/daily-post.yml` runs every day at 09:17 UTC in two stages:
 
-1. **generate** — creates several candidate posts, scores each against the
-   X algorithm rubric in `judge.md`, and writes the winner plus the full
-   scored table to the run's summary page.
+1. **generate** — creates several candidate posts (writer model, one format
+   each: story, number, unpopular opinion, ...), grounded in recent public
+   GitHub activity and steered by the taste `examples` in `config.json`,
+   scores each against the X algorithm rubric in `judge.md` (judge model),
+   and writes the winner plus the full scored table to the run's summary
+   page. All candidates are logged to `candidates.jsonl`; winners that were
+   rejected in past runs are fed back as negative examples.
 2. **publish** — waits for manual approval (the `approve-post` environment).
    You get a GitHub notification, read the post in the run summary, and
    Approve to publish or Reject to skip that day. Published posts are logged
