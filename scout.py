@@ -33,6 +33,7 @@ from requests_oauthlib import OAuth1
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 HISTORY_PATH = ROOT / "posted.jsonl"
+UNSLOP_PATH = ROOT / "unslop.md"
 
 X_API = "https://api.x.com/2"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
@@ -112,14 +113,33 @@ def verify_credentials() -> int:
     return 0
 
 
+def load_unslop() -> str:
+    if not UNSLOP_PATH.exists():
+        return ""
+    text = UNSLOP_PATH.read_text()
+    if text.startswith("---"):
+        end = text.find("---", 3)
+        if end != -1:
+            text = text[end + 3 :]
+    return text.strip()
+
+
 def generate_post(cfg: dict) -> str:
     topic = random.choice(cfg["topics"])
     history = load_history()
     recent = "\n".join(f"- {t}" for t in history) if history else "(none yet)"
+    unslop = load_unslop()
+    style = (
+        f"\n\nStyle guide (apply these rules to your writing, then self-audit: "
+        f"'what makes this obviously AI generated?' and fix it):\n{unslop}\n"
+        if unslop
+        else ""
+    )
     prompt = (
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Topic for today: {topic}\n\n"
-        f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n\n"
+        f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
+        f"{style}\n"
         f"Write ONE post under 260 characters. It should feel like a real "
         f"thought, not marketing copy. No hashtags, no emojis, no quotes "
         f"around it. Reply with the post text only."
@@ -140,6 +160,8 @@ def generate_post(cfg: dict) -> str:
     )
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip().strip('"')
+    for old, new in {"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"', "\u2014": ", ", "\u00a0": " "}.items():
+        text = text.replace(old, new)
     if not text:
         raise SystemExit("generation returned an empty post")
     return text[:MAX_CHARS]
