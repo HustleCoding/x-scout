@@ -36,6 +36,7 @@ HISTORY_PATH = ROOT / "posted.jsonl"
 CANDIDATES_LOG_PATH = ROOT / "candidates.jsonl"
 UNSLOP_PATH = ROOT / "unslop.md"
 JUDGE_PATH = ROOT / "judge.md"
+MEMO_PATH = ROOT / "memo.md"
 
 X_API = "https://api.x.com/2"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
@@ -192,6 +193,120 @@ def log_candidates(winner: str, scored: list[dict]) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
+def load_history_entries() -> list[dict]:
+    if not HISTORY_PATH.exists():
+        return []
+    entries = []
+    for line in HISTORY_PATH.read_text().strip().splitlines():
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def save_history_entries(entries: list[dict]) -> None:
+    HISTORY_PATH.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+
+def engagement_score(m: dict) -> float:
+    return (
+        m.get("reply_count", 0) * 3.0
+        + m.get("retweet_count", 0) * 2.0
+        + m.get("quote_count", 0) * 1.5
+        + m.get("like_count", 0) * 1.0
+    )
+
+
+def update_metrics(limit: int = 30) -> int:
+    """Fetch public_metrics for recent posts and store them in posted.jsonl."""
+    entries = load_history_entries()
+    recent = [e for e in entries[-limit:] if e.get("tweet_id")]
+    if not recent:
+        print("metrics: no posts to update")
+        return 0
+    ids = ",".join(e["tweet_id"] for e in recent)
+    resp = requests.get(
+        f"{X_API}/tweets",
+        params={"ids": ids, "tweet.fields": "public_metrics"},
+        auth=x_auth(),
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        print(f"metrics: fetch failed ({resp.status_code}): {resp.text}")
+        return 1
+    by_id = {t["id"]: t.get("public_metrics", {}) for t in resp.json().get("data", [])}
+    now = datetime.now(timezone.utc).isoformat()
+    updated = 0
+    for e in entries:
+        m = by_id.get(e.get("tweet_id"))
+        if m is not None:
+            e["metrics"] = m
+            e["metrics_at"] = now
+            updated += 1
+    save_history_entries(entries)
+    print(f"metrics: updated {updated} posts")
+    return 0
+
+
+def performance_blocks(top_n: int = 3) -> str:
+    """Prompt block describing top performers and flops among measured posts."""
+    measured = [e for e in load_history_entries() if e.get("metrics")]
+    if len(measured) < 4:
+        return ""
+    ranked = sorted(measured, key=lambda e: engagement_score(e["metrics"]), reverse=True)
+
+    def fmt(e: dict) -> str:
+        m = e["metrics"]
+        return (
+            f"- {e['text']} ({m.get('impression_count', 0)} views, "
+            f"{m.get('like_count', 0)} likes, {m.get('reply_count', 0)} replies, "
+            f"{m.get('retweet_count', 0)} reposts)"
+        )
+
+    tops = "\n".join(fmt(e) for e in ranked[:top_n])
+    flops = "\n".join(fmt(e) for e in ranked[-top_n:])
+    return (
+        f"\nYour best performing posts (the audience wants more like these):\n{tops}\n"
+        f"\nYour worst performing posts (avoid whatever these did):\n{flops}\n"
+    )
+
+
+def load_memo() -> str:
+    if MEMO_PATH.exists():
+        return MEMO_PATH.read_text().strip()
+    return ""
+
+
+def self_review(cfg: dict) -> int:
+    """Write an editor's memo from recent performance and taste signals."""
+    measured = [e for e in load_history_entries() if e.get("metrics")]
+    if len(measured) < 4:
+        print("self-review: not enough measured posts yet (need 4+)")
+        return 0
+    ranked = sorted(measured, key=lambda e: engagement_score(e["metrics"]), reverse=True)
+    posts = "\n".join(
+        f"- {e['text']} | {e['metrics']}" for e in ranked[-20:]
+    )
+    rejected = rejected_winners()
+    rejected_block = "\n".join(f"- {r}" for r in rejected) or "(none)"
+    old_memo = load_memo()
+    prompt = (
+        f"You are the editor for an X (twitter) account. Persona: {cfg['persona']}\n\n"
+        f"Recent posts with engagement metrics:\n{posts}\n\n"
+        f"Drafts the author rejected before posting:\n{rejected_block}\n\n"
+        f"Previous memo (revise, don't repeat):\n{old_memo or '(none)'}\n\n"
+        f"Write a short editor's memo (under 200 words) for the ghostwriter: "
+        f"what is working with this audience, what is not, and 3-5 concrete "
+        f"directives for future posts. Be specific to the data, not generic "
+        f"social media advice. Plain markdown, no preamble."
+    )
+    memo = llm(cfg, prompt, max_tokens=500, temperature=0.4)
+    MEMO_PATH.write_text(memo.strip() + "\n")
+    print(f"self-review: wrote memo ({len(memo)} chars)")
+    return 0
+
+
 def rejected_winners(limit: int = 10) -> list[str]:
     """Winners from past runs that never made it into posted.jsonl."""
     if not CANDIDATES_LOG_PATH.exists():
@@ -273,11 +388,14 @@ def generate_candidates(cfg: dict, activity: str = "") -> list[str]:
         if rejected
         else ""
     )
+    performance = performance_blocks()
+    memo = load_memo()
+    memo_block = f"\nEditor's memo (follow these directives):\n{memo}\n" if memo else ""
     prompt = (
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{activity_block}{examples_block}{rejected_block}{style}\n"
+        f"{activity_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
@@ -362,10 +480,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--generate-only", metavar="FILE", help="generate a post and write it to FILE, do not publish")
     parser.add_argument("--verify", action="store_true", help="check X API credentials, no post")
     parser.add_argument("--report", metavar="FILE", help="write a markdown table of all scored candidates to FILE")
+    parser.add_argument("--update-metrics", action="store_true", help="fetch engagement metrics for recent posts, no post")
+    parser.add_argument("--self-review", action="store_true", help="write an editor's memo from recent performance, no post")
     args = parser.parse_args(argv)
 
     if args.verify:
         return verify_credentials()
+    if args.update_metrics:
+        return update_metrics()
+    if args.self_review:
+        return self_review(load_config())
 
     cfg = load_config()
     text = (
