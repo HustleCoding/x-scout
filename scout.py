@@ -37,6 +37,7 @@ CANDIDATES_LOG_PATH = ROOT / "candidates.jsonl"
 UNSLOP_PATH = ROOT / "unslop.md"
 JUDGE_PATH = ROOT / "judge.md"
 MEMO_PATH = ROOT / "memo.md"
+IDEAS_PATH = ROOT / "ideas.jsonl"
 
 X_API = "https://api.x.com/2"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
@@ -325,6 +326,68 @@ def self_review(cfg: dict) -> int:
     return 0
 
 
+def load_ideas(days: int = 7, limit: int = 5) -> list[str]:
+    if not IDEAS_PATH.exists():
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    ideas = []
+    for line in IDEAS_PATH.read_text().strip().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        try:
+            ts = datetime.fromisoformat(entry.get("date", "")).timestamp()
+        except ValueError:
+            continue
+        if ts >= cutoff and entry.get("text"):
+            ideas.append(entry["text"])
+    return ideas[-limit:]
+
+
+def briefing(cfg: dict) -> int:
+    """Send a morning digest to Telegram: post metrics, HN, repo activity."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        print("briefing: telegram not configured, skipping")
+        return 0
+    parts = ["morning briefing\n"]
+    entries = load_history_entries()
+    measured = [e for e in entries if e.get("metrics")]
+    if entries:
+        last = entries[-1]
+        m = last.get("metrics") or {}
+        stats = (
+            f" ({m.get('impression_count', 0)} views, {m.get('like_count', 0)} likes, "
+            f"{m.get('reply_count', 0)} replies)"
+            if m
+            else ""
+        )
+        parts.append(f"latest post{stats}:\n{last['text']}\n")
+    if len(measured) >= 2:
+        best = max(measured, key=lambda e: engagement_score(e["metrics"]))
+        if best is not entries[-1]:
+            parts.append(f"all-time top performer:\n{best['text']}\n")
+    activity = github_activity(cfg, limit=6)
+    if activity:
+        parts.append(f"your recent work:\n{activity}\n")
+    news = hn_front_page(limit=5)
+    if news:
+        parts.append(f"on hacker news:\n{news}\n")
+    ideas = load_ideas()
+    if ideas:
+        parts.append(f"ideas in the inbox ({len(ideas)}): today's candidates will draw from them.")
+    resp = requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": "\n".join(parts)[:4000]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print("briefing: sent")
+    return 0
+
+
 def rejected_winners(limit: int = 10) -> list[str]:
     """Winners from past runs that never made it into posted.jsonl."""
     if not CANDIDATES_LOG_PATH.exists():
@@ -404,6 +467,15 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         if examples
         else ""
     )
+    ideas = load_ideas()
+    ideas_block = (
+        "\nRaw ideas from the author (TOP priority: develop at least half the "
+        "candidates from these, in the author's voice):\n"
+        + "\n".join(f"- {i}" for i in ideas)
+        + "\n"
+        if ideas
+        else ""
+    )
     rejected = rejected_winners()
     rejected_block = (
         "\nPast drafts the author REJECTED (wrong taste, do not write like these):\n"
@@ -419,7 +491,7 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
+        f"{ideas_block}{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
@@ -515,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update-metrics", action="store_true", help="fetch engagement metrics for recent posts, no post")
     parser.add_argument("--self-review", action="store_true", help="write an editor's memo from recent performance, no post")
     parser.add_argument("--candidates-out", metavar="FILE", help="write the top 3 scored candidates as JSON to FILE")
+    parser.add_argument("--briefing", action="store_true", help="send a morning digest to Telegram, no post")
     args = parser.parse_args(argv)
 
     if args.verify:
@@ -523,6 +596,8 @@ def main(argv: list[str] | None = None) -> int:
         return update_metrics()
     if args.self_review:
         return self_review(load_config())
+    if args.briefing:
+        return briefing(load_config())
 
     cfg = load_config()
     text = (

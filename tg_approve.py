@@ -25,12 +25,14 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
+IDEAS_PATH = ROOT / "ideas.jsonl"
 POLL_SECONDS = 25
 DEFAULT_TIMEOUT_MINUTES = 45
 MAX_REGENS = 3
@@ -64,6 +66,36 @@ def write_output(status: str, post: str = "") -> None:
         with open(out, "a") as f:
             f.write(f"status={status}\n")
             f.write(f"post<<POST_EOF\n{post}\nPOST_EOF\n")
+
+
+def intake_ideas(token: str, chat_id: str) -> int:
+    """Store texts sent to the bot since the last run as post ideas.
+
+    Run before the approval window opens, so queued messages become ideas
+    instead of being consumed as reply-to-edit posts.
+    """
+    updates = api(token, "getUpdates", allowed_updates=["message"])["result"]
+    ideas = []
+    last_id = None
+    for u in updates:
+        last_id = u["update_id"]
+        msg = u.get("message") or {}
+        text = (msg.get("text") or "").strip()
+        if str(msg.get("chat", {}).get("id")) == chat_id and text:
+            ideas.append(text)
+    if last_id is not None:
+        api(token, "getUpdates", offset=last_id + 1, timeout=0)
+    if not ideas:
+        print("intake: no new ideas")
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    with IDEAS_PATH.open("a") as f:
+        for text in ideas:
+            f.write(json.dumps({"date": now, "text": text}) + "\n")
+    api(token, "sendMessage", chat_id=chat_id,
+        text=f"noted {len(ideas)} idea(s) for the inbox; today's candidates will draw from them.")
+    print(f"intake: stored {len(ideas)} idea(s)")
+    return 0
 
 
 def save_taste_example(text: str) -> None:
@@ -111,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidates", metavar="FILE", help="JSON file with scored candidates")
     parser.add_argument("--chat-id", action="store_true", help="print the chat id of the last message sent to the bot")
     parser.add_argument("--timeout-minutes", type=int, default=DEFAULT_TIMEOUT_MINUTES)
+    parser.add_argument("--intake", action="store_true", help="store queued messages as post ideas, then exit")
     args = parser.parse_args(argv)
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -121,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         return find_chat_id(token)
 
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if args.intake:
+        if not token or not chat_id:
+            print("intake: telegram not configured, skipping")
+            return 0
+        return intake_ideas(token, chat_id)
     if not token or not chat_id:
         write_output("unconfigured")
         return 0
