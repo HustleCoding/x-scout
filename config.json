@@ -11,6 +11,7 @@
     "building in public"
   ],
   "lead_pitch_context": "Florin, a solo developer who builds custom web apps for founders in 2 weeks for a fixed $4,999 (design, build, launch; client owns the code)",
+  "lead_subreddits": ["forhire", "startups", "SaaS", "Entrepreneur", "nocode"],
   "lead_keywords": [
     "\"looking for a developer\" (mvp OR app OR saas)",
     "\"need a developer to build\"",

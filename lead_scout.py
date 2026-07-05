@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Find people on X who need AI engineering help and send leads to Telegram.
+"""Find people who need software built and send leads to Telegram.
 
-Daily: search recent posts for client-need phrases (config lead_keywords),
-drop spam and already-seen leads (leads.jsonl), draft a short pitch for each,
-and send them to Telegram. Nothing is ever posted by the agent — you reply
-from your own phone.
+Daily: search X (config lead_keywords), Reddit (config lead_subreddits), and
+Hacker News (Algolia) for client-need posts, drop spam and already-seen leads
+(leads.jsonl), draft a short pitch for each, and send them to Telegram.
+Nothing is ever posted by the agent — you reply from your own account.
 
     python lead_scout.py --dry-run    # search + draft, print, no telegram
     python lead_scout.py              # full flow
@@ -12,9 +12,13 @@ from your own phone.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
+import re
 import sys
+import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,7 +41,19 @@ DEFAULT_KEYWORDS = [
 ]
 
 SPAM_MARKERS = ("dm me", "apply here", "we're hiring", "job alert", "#hiring",
-                "open to work", "job hunting", "freelancer", "portfolio")
+                "open to work", "job hunting", "freelancer", "portfolio",
+                "[for hire]", "for hire]")
+
+DEFAULT_SUBREDDITS = ["forhire", "startups", "SaaS", "Entrepreneur", "nocode"]
+
+REDDIT_NEED_MARKERS = ("[hiring]", "looking for", "need a dev", "need someone",
+                       "need help build", "who can build", "build my",
+                       "technical cofounder", "technical co-founder", "mvp")
+
+HN_QUERIES = ('"looking for a developer"', '"need a developer"',
+              '"need someone to build"', '"technical cofounder"')
+
+UA = {"User-Agent": "linux:x-scout-leads:v1.0 (by u/hustlecoding)"}
 
 
 def seen_ids() -> set[str]:
@@ -46,9 +62,12 @@ def seen_ids() -> set[str]:
     ids = set()
     for line in LEADS_PATH.read_text().strip().splitlines():
         try:
-            ids.add(json.loads(line)["id"])
+            lid = json.loads(line)["id"]
         except (json.JSONDecodeError, KeyError):
             continue
+        ids.add(lid)
+        if lid.isdigit():  # legacy x-only entries lacked the source prefix
+            ids.add(f"x:{lid}")
     return ids
 
 
@@ -56,7 +75,9 @@ def log_lead(lead: dict, pitch: str) -> None:
     entry = {
         "date": datetime.now(timezone.utc).isoformat(),
         "id": lead["id"],
-        "author_id": lead.get("author_id", ""),
+        "source": lead["source"],
+        "url": lead["url"],
+        "author": lead.get("author", ""),
         "text": lead["text"],
         "pitch": pitch,
     }
@@ -64,7 +85,7 @@ def log_lead(lead: dict, pitch: str) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
-def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
+def search_x(cfg: dict) -> list[dict]:
     keywords = cfg.get("lead_keywords") or DEFAULT_KEYWORDS
     query = "(" + " OR ".join(keywords) + ") -is:retweet -is:reply -is:quote lang:en"
     resp = requests.get(
@@ -78,17 +99,109 @@ def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
         timeout=30,
     )
     if resp.status_code != 200:
-        raise SystemExit(f"lead search failed ({resp.status_code}): {resp.text}")
+        print(f"leads: x search failed ({resp.status_code}): {resp.text}")
+        return []
     tweets = resp.json().get("data", [])
-    skip = seen_ids()
+    tweets.sort(key=lambda t: traction(t.get("public_metrics", {})), reverse=True)
+    return [
+        {
+            "id": f"x:{t['id']}",
+            "source": "x",
+            "url": f"https://x.com/i/status/{t['id']}",
+            "text": t["text"],
+            "author": t.get("author_id", ""),
+        }
+        for t in tweets
+    ]
+
+
+def search_reddit(cfg: dict) -> list[dict]:
     leads = []
-    for t in sorted(tweets, key=lambda t: traction(t.get("public_metrics", {})), reverse=True):
-        text = t.get("text", "").lower()
-        if t["id"] in skip or any(m in text for m in SPAM_MARKERS):
+    for i, sub in enumerate(cfg.get("lead_subreddits") or DEFAULT_SUBREDDITS):
+        if i:
+            time.sleep(10)  # reddit rate-limits unauthenticated clients hard
+        root = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    f"https://www.reddit.com/r/{sub}/new.rss?limit=25",
+                    headers=UA, timeout=30,
+                )
+                if resp.status_code == 429:
+                    time.sleep(15 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                root = ET.fromstring(resp.content)
+                break
+            except (requests.RequestException, ET.ParseError) as e:
+                print(f"leads: reddit r/{sub} failed: {e}")
+                break
+        if root is None:
+            print(f"leads: reddit r/{sub} unavailable (rate limited)")
             continue
-        if not is_client_lead(cfg, t["text"]):
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        for entry in root.findall("a:entry", ns):
+            title = entry.findtext("a:title", "", ns)
+            link = entry.find("a:link", ns)
+            url = link.get("href") if link is not None else ""
+            eid = entry.findtext("a:id", url, ns)
+            body = html.unescape(re.sub(r"<[^>]+>", " ", entry.findtext("a:content", "", ns)))
+            body = re.sub(r"\s+", " ", body).replace("[link] [comments]", "").strip()
+            if not any(m in title.lower() for m in REDDIT_NEED_MARKERS):
+                continue
+            leads.append({
+                "id": f"reddit:{eid}",
+                "source": f"reddit r/{sub}",
+                "url": url,
+                "text": f"{title}\n{body[:400]}",
+                "author": entry.findtext("a:author/a:name", "", ns),
+            })
+    return leads
+
+
+def search_hn(cfg: dict) -> list[dict]:
+    since = int(time.time()) - 2 * 86400
+    leads = []
+    for q in HN_QUERIES:
+        try:
+            resp = requests.get(
+                "https://hn.algolia.com/api/v1/search_by_date",
+                params={"query": q, "tags": "(story,comment)",
+                        "numericFilters": f"created_at_i>{since}"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+        except (requests.RequestException, ValueError) as e:
+            print(f"leads: hn search failed: {e}")
             continue
-        leads.append(t)
+        for h in hits:
+            text = h.get("title") or ""
+            comment = re.sub(r"<[^>]+>", " ", h.get("comment_text") or "")
+            text = html.unescape(f"{text}\n{comment}".strip())[:500]
+            hid = h["objectID"]
+            leads.append({
+                "id": f"hn:{hid}",
+                "source": "hn",
+                "url": f"https://news.ycombinator.com/item?id={hid}",
+                "text": text,
+                "author": h.get("author", ""),
+            })
+    return leads
+
+
+def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
+    candidates = search_x(cfg) + search_reddit(cfg) + search_hn(cfg)
+    skip = seen_ids()
+    leads, seen_now = [], set()
+    for c in candidates:
+        text = c["text"].lower()
+        if c["id"] in skip or c["id"] in seen_now or any(m in text for m in SPAM_MARKERS):
+            continue
+        if not is_client_lead(cfg, c["text"]):
+            continue
+        seen_now.add(c["id"])
+        leads.append(c)
         if len(leads) >= limit:
             break
     return leads
@@ -99,7 +212,7 @@ def is_client_lead(cfg: dict, text: str) -> bool:
     not a developer advertising their own services."""
     verdict = llm(
         cfg,
-        "Someone posted this on X:\n"
+        "Someone posted this online:\n"
         f"{text}\n\n"
         "Does the author want someone to build software FOR THEM (a potential "
         "client for a freelance developer)? Answer yes if they are asking for a "
@@ -119,7 +232,7 @@ def draft_pitch(cfg: dict, lead_text: str) -> str:
     prompt = (
         f"Persona: {cfg['persona']}\n"
         f"You are {product}.\n\n"
-        f"Someone posted on X that they need software built:\n{lead_text}\n\n"
+        f"Someone posted online that they need software built:\n{lead_text}\n\n"
         f"Draft a SHORT reply (under 200 characters) they'd want to answer: "
         f"address their specific need, offer one concrete first step or "
         f"question, no generic sales talk, no links, no hashtags, no emojis. "
@@ -131,11 +244,10 @@ def draft_pitch(cfg: dict, lead_text: str) -> str:
 
 
 def send_lead(token: str, chat_id: str, lead: dict, pitch: str) -> None:
-    m = lead.get("public_metrics", {})
     text = (
-        f"lead ({m.get('like_count', 0)} likes, {m.get('reply_count', 0)} replies):\n\n"
+        f"lead ({lead['source']}):\n\n"
         f"{lead['text']}\n"
-        f"https://x.com/i/status/{lead['id']}\n\n"
+        f"{lead['url']}\n\n"
         f"suggested reply (paste/adapt from your phone):\n{pitch}"
     )
     api(token, "sendMessage", chat_id=chat_id, text=text)
@@ -160,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for lead in leads:
         pitch = draft_pitch(cfg, lead["text"])
-        print(f"lead https://x.com/i/status/{lead['id']}: {lead['text'][:80]!r}")
+        print(f"lead [{lead['source']}] {lead['url']}: {lead['text'][:80]!r}")
         print(f"  pitch: {pitch!r}")
         if args.dry_run:
             continue
