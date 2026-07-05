@@ -1,0 +1,52 @@
+name: Daily replies
+
+on:
+  schedule:
+    - cron: "47 15 * * *" # 15:47 UTC daily (17:47/18:47 Romania time)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Search and draft but do not ask or publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-replies
+  cancel-in-progress: false
+
+jobs:
+  replies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Find, draft, approve, and publish replies
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python reply_scout.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Commit reply log
+        run: |
+          if [ -n "$(git status --porcelain replied.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add replied.jsonl
+            git commit -m "log: record replies"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
