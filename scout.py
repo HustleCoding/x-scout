@@ -150,25 +150,35 @@ def clean_text(text: str) -> str:
     return text[:MAX_CHARS]
 
 
-def hn_front_page(limit: int = 8) -> str:
+def hn_items(limit: int = 8) -> list[dict]:
     try:
         ids = requests.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=15
         ).json()[:limit]
-        titles = []
+        items = []
         for i in ids:
             item = requests.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{i}.json", timeout=10
             ).json()
             title = (item or {}).get("title", "")
             if title:
-                titles.append(title)
+                items.append(
+                    {
+                        "title": title,
+                        "url": item.get("url")
+                        or f"https://news.ycombinator.com/item?id={i}",
+                    }
+                )
     except (requests.RequestException, ValueError):
-        return ""
-    return "\n".join(f"- {t}" for t in titles)
+        return []
+    return items
 
 
-def github_activity(cfg: dict, limit: int = 12) -> str:
+def hn_front_page(limit: int = 8) -> str:
+    return "\n".join(f"- {i['title']}" for i in hn_items(limit))
+
+
+def github_activity(cfg: dict, limit: int = 12, links: bool = False) -> str:
     user = cfg.get("github_user", "")
     if not user:
         return ""
@@ -183,6 +193,7 @@ def github_activity(cfg: dict, limit: int = 12) -> str:
     except requests.RequestException:
         return ""
     lines: list[str] = []
+    repos: list[str] = []
     for e in events:
         repo = e.get("repo", {}).get("name", "")
         payload = e.get("payload", {})
@@ -191,14 +202,23 @@ def github_activity(cfg: dict, limit: int = 12) -> str:
                 msg = c.get("message", "").splitlines()[0]
                 if msg:
                     lines.append(f"commit to {repo}: {msg}")
+                    repos.append(repo)
         elif e.get("type") == "PullRequestEvent":
             title = payload.get("pull_request", {}).get("title", "")
             if title:
                 lines.append(f"PR ({payload.get('action', '')}) in {repo}: {title}")
+                repos.append(repo)
         elif e.get("type") == "CreateEvent" and payload.get("ref_type") == "repository":
             lines.append(f"created repo {repo}")
+            repos.append(repo)
         if len(lines) >= limit:
             break
+    lines, repos = lines[:limit], repos[:limit]
+    if links:
+        lines = [
+            f"{l}\n  https://github.com/{r}" if r else l
+            for l, r in zip(lines, repos)
+        ]
     return "\n".join(f"- {l}" for l in lines)
 
 
@@ -364,15 +384,17 @@ def briefing(cfg: dict) -> int:
             if m
             else ""
         )
-        parts.append(f"latest post{stats}:\n{last['text']}\n")
+        link = f"\nhttps://x.com/i/status/{last['tweet_id']}" if last.get("tweet_id") else ""
+        parts.append(f"latest post{stats}:\n{last['text']}{link}\n")
     if len(measured) >= 2:
         best = max(measured, key=lambda e: engagement_score(e["metrics"]))
         if best is not entries[-1]:
-            parts.append(f"all-time top performer:\n{best['text']}\n")
-    activity = github_activity(cfg, limit=6)
+            link = f"\nhttps://x.com/i/status/{best['tweet_id']}" if best.get("tweet_id") else ""
+            parts.append(f"all-time top performer:\n{best['text']}{link}\n")
+    activity = github_activity(cfg, limit=6, links=True)
     if activity:
         parts.append(f"your recent work:\n{activity}\n")
-    news = hn_front_page(limit=5)
+    news = "\n".join(f"- {i['title']}\n  {i['url']}" for i in hn_items(limit=5))
     if news:
         parts.append(f"on hacker news:\n{news}\n")
     ideas = load_ideas()
