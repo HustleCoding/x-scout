@@ -2,7 +2,7 @@ name: Weekly self-review
 
 on:
   schedule:
-    - cron: "47 8 * * 0" # Sundays 08:47 UTC, before the daily post
+    - cron: "47 12 * * 0" # Sundays 12:47 UTC, before the daily post
   workflow_dispatch:
 
 permissions:

@@ -2,7 +2,7 @@ name: Daily post
 
 on:
   schedule:
-    - cron: "17 9 * * *" # 09:17 UTC daily
+    - cron: "17 13 * * *" # 13:17 UTC daily (15:17/16:17 Romania time)
   workflow_dispatch:
     inputs:
       dry_run:
