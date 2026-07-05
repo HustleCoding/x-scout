@@ -10,6 +10,14 @@
     "developer tools that feel magical",
     "building in public"
   ],
+  "lead_pitch_context": "Florin, a solo developer who builds custom web apps for founders in 2 weeks for a fixed $4,999 (design, build, launch; client owns the code)",
+  "lead_keywords": [
+    "\"looking for a developer\" (mvp OR app OR saas)",
+    "\"need a developer to build\"",
+    "\"need someone to build\" (app OR mvp OR saas)",
+    "\"looking for a technical cofounder\"",
+    "\"who can build my mvp\""
+  ],
   "reply_keywords": [
     "ai agents",
     "building in public",

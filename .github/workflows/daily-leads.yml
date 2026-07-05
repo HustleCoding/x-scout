@@ -1,0 +1,52 @@
+name: Daily leads
+
+on:
+  schedule:
+    - cron: "17 07 * * *" # 07:17 UTC daily (09:17/10:17 Romania time)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Search and draft but do not send to Telegram"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-leads
+  cancel-in-progress: false
+
+jobs:
+  leads:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Find leads and send to Telegram
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python lead_scout.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Commit lead log
+        run: |
+          if [ -n "$(git status --porcelain leads.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add leads.jsonl
+            git commit -m "log: record leads"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi

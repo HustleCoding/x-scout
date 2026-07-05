@@ -59,6 +59,15 @@ per quote ("post quote" / "skip"). Nothing is ever posted without your tap;
 if Telegram isn't configured the job does nothing. Note: the search endpoint
 is a paid X API read (~25 tweets/day).
 
+A third daily workflow (`daily-leads.yml`, 07:17 UTC) scouts for clients: it
+searches recent X posts for `lead_keywords` in `config.json` (people asking for
+a developer/app/MVP), filters out developers advertising themselves via an LLM
+check, dedupes against `leads.jsonl`, and sends each lead to Telegram with the
+post link and a suggested pitch (tuned by `lead_pitch_context`). The agent
+never replies itself — you paste/adapt the pitch from your phone, which also
+sidesteps the X API engagement restrictions. Same paid search read (~25
+tweets/day).
+
 One-time setup:
 
 - Repo Actions secrets: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`,
