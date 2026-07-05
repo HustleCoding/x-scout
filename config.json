@@ -10,6 +10,12 @@
     "developer tools that feel magical",
     "building in public"
   ],
+  "reply_keywords": [
+    "ai agents",
+    "building in public",
+    "indie hacker",
+    "llm coding"
+  ],
   "examples": [
     "spent 3 hours debugging an oauth flow. the bug was a trailing space in an env var. computers are humbling",
     "my ai agent rejected its own draft today because it sounded too much like an ai. we've come full circle",

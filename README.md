@@ -25,7 +25,8 @@ Posts to X (x.com) two ways:
    an "editor's memo" (`memo.md`) from the data — concrete directives that
    steer future posts.
    The run also collects any messages you sent the bot since the last run
-   into an idea inbox (`ideas.jsonl`) — text the bot a raw thought anytime
+   into an idea inbox (`ideas.jsonl`) — text (or send a voice note to) the
+   bot a raw thought anytime
    and the next generation drafts candidates from your ideas first (ideas
    stay active for 7 days). It then sends you a morning briefing on
    Telegram: your latest post's metrics, your recent repo activity, and
@@ -49,6 +50,14 @@ Posts to X (x.com) two ways:
 
 It can also be triggered manually from the Actions tab, optionally as a dry
 run (generate only, no publish job).
+
+A second daily workflow (`daily-replies.yml`, 15:47 UTC) grows the account
+through replies: it searches recent X posts for `reply_keywords` in
+`config.json`, ranks them by traction, drafts a reply for the top 2 (never
+the same author twice in a week — `replied.jsonl`), and asks you on Telegram
+per reply ("post reply" / "skip"). Nothing is ever replied without your tap;
+if Telegram isn't configured the job does nothing. Note: the search endpoint
+is a paid X API read (~25 tweets/day).
 
 One-time setup:
 

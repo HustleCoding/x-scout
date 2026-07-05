@@ -20,6 +20,7 @@ unconfigured) and `post` (the text to publish).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -68,6 +69,40 @@ def write_output(status: str, post: str = "") -> None:
             f.write(f"post<<POST_EOF\n{post}\nPOST_EOF\n")
 
 
+def transcribe_voice(token: str, file_id: str) -> str:
+    """Transcribe a Telegram voice note via an audio-capable OpenRouter model."""
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        return ""
+    try:
+        path = api(token, "getFile", file_id=file_id)["result"]["file_path"]
+        audio = requests.get(
+            f"https://api.telegram.org/file/bot{token}/{path}", timeout=60
+        ).content
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": "google/gemini-2.5-flash",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Transcribe this voice note verbatim. Reply with ONLY the transcript."},
+                        {"type": "input_audio", "input_audio": {
+                            "data": base64.b64encode(audio).decode(),
+                            "format": "ogg",
+                        }},
+                    ],
+                }],
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+    except (requests.RequestException, KeyError, ValueError):
+        return ""
+
+
 def intake_ideas(token: str, chat_id: str) -> int:
     """Store texts sent to the bot since the last run as post ideas.
 
@@ -80,8 +115,12 @@ def intake_ideas(token: str, chat_id: str) -> int:
     for u in updates:
         last_id = u["update_id"]
         msg = u.get("message") or {}
+        if str(msg.get("chat", {}).get("id")) != chat_id:
+            continue
         text = (msg.get("text") or "").strip()
-        if str(msg.get("chat", {}).get("id")) == chat_id and text:
+        if not text and msg.get("voice"):
+            text = transcribe_voice(token, msg["voice"]["file_id"])
+        if text:
             ideas.append(text)
     if last_id is not None:
         api(token, "getUpdates", offset=last_id + 1, timeout=0)
