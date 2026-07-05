@@ -31,6 +31,7 @@ from tg_approve import api
 ROOT = Path(__file__).resolve().parent
 LEADS_PATH = ROOT / "leads.jsonl"
 MAX_LEADS = 5
+AUTHOR_COOLDOWN_DAYS = 30
 
 DEFAULT_KEYWORDS = [
     '"looking for an ai engineer"',
@@ -56,19 +57,29 @@ HN_QUERIES = ('"looking for a developer"', '"need a developer"',
 UA = {"User-Agent": "linux:x-scout-leads:v1.0 (by u/hustlecoding)"}
 
 
-def seen_ids() -> set[str]:
+def seen_ids() -> tuple[set[str], set[str]]:
+    """Return (lead ids ever pitched, authors pitched within the cooldown)."""
     if not LEADS_PATH.exists():
-        return set()
-    ids = set()
+        return set(), set()
+    cutoff = datetime.now(timezone.utc).timestamp() - AUTHOR_COOLDOWN_DAYS * 86400
+    ids, authors = set(), set()
     for line in LEADS_PATH.read_text().strip().splitlines():
         try:
-            lid = json.loads(line)["id"]
+            entry = json.loads(line)
+            lid = entry["id"]
         except (json.JSONDecodeError, KeyError):
             continue
         ids.add(lid)
         if lid.isdigit():  # legacy x-only entries lacked the source prefix
             ids.add(f"x:{lid}")
-    return ids
+        author = entry.get("author") or entry.get("author_id") or ""
+        try:
+            recent = datetime.fromisoformat(entry["date"]).timestamp() >= cutoff
+        except (KeyError, ValueError):
+            recent = False
+        if author and recent:
+            authors.add(author)
+    return ids, authors
 
 
 def log_lead(lead: dict, pitch: str) -> None:
@@ -192,15 +203,20 @@ def search_hn(cfg: dict) -> list[dict]:
 
 def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
     candidates = search_x(cfg) + search_reddit(cfg) + search_hn(cfg)
-    skip = seen_ids()
-    leads, seen_now = [], set()
+    skip, skip_authors = seen_ids()
+    leads, seen_now, seen_authors = [], set(), set()
     for c in candidates:
         text = c["text"].lower()
         if c["id"] in skip or c["id"] in seen_now or any(m in text for m in SPAM_MARKERS):
             continue
+        author = c.get("author", "")
+        if author and (author in skip_authors or author in seen_authors):
+            continue
         if not is_client_lead(cfg, c["text"]):
             continue
         seen_now.add(c["id"])
+        if author:
+            seen_authors.add(author)
         leads.append(c)
         if len(leads) >= limit:
             break

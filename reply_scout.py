@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Find high-traction posts on X in our topics and quote them with approval.
+"""Find high-traction posts on X in our topics and draft quote-post commentary.
 
 Daily: search recent posts for the configured keywords, rank by traction,
-draft a quote post for the top targets, ask on Telegram per quote, publish
-the approved ones. Every quote is logged to replied.jsonl and an author is
-never quoted twice within a week. (Quote posts, not replies: X's API blocks
-replying to conversations the account hasn't been engaged in.)
+draft a quote comment for the top targets, and send each to Telegram as
+draft + link — you post it manually from your phone. Nothing is published by
+the agent: X's API blocks replies/quotes to conversations the account hasn't
+been engaged in. Every sent draft is logged to replied.jsonl and an author is
+never targeted twice within a week.
 
-    python reply_scout.py --dry-run    # search + draft, print, no telegram/publish
+    python reply_scout.py --dry-run    # search + draft, print, no telegram
     python reply_scout.py              # full flow
 """
 from __future__ import annotations
@@ -16,7 +17,6 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,8 +29,6 @@ ROOT = Path(__file__).resolve().parent
 REPLIED_PATH = ROOT / "replied.jsonl"
 MAX_TARGETS = 2
 AUTHOR_COOLDOWN_DAYS = 7
-POLL_SECONDS = 25
-DEFAULT_TIMEOUT_MINUTES = 45
 
 DEFAULT_KEYWORDS = [
     "ai agents",
@@ -56,14 +54,13 @@ def recent_authors(days: int = AUTHOR_COOLDOWN_DAYS) -> set[str]:
     return authors
 
 
-def log_quote(target: dict, quote_text: str, quote_id: str) -> None:
+def log_quote(target: dict, quote_text: str) -> None:
     entry = {
         "date": datetime.now(timezone.utc).isoformat(),
         "target_id": target["id"],
         "author_id": target["author_id"],
         "target_text": target["text"],
         "quote": quote_text,
-        "quote_id": quote_id,
     }
     with REPLIED_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -142,60 +139,21 @@ def draft_quote(cfg: dict, target_text: str) -> str:
                           model=cfg.get("writer_model") or cfg["model"]))
 
 
-def publish_quote(text: str, quoted_id: str) -> str | None:
-    resp = requests.post(
-        f"{X_API}/tweets",
-        json={"text": text, "quote_tweet_id": quoted_id},
-        auth=x_auth(),
-        timeout=30,
-    )
-    if resp.status_code not in (200, 201):
-        print(f"  quote failed ({resp.status_code}): {resp.text}")
-        return None
-    return resp.json()["data"]["id"]
-
-
-def approve_on_telegram(token: str, chat_id: str, target: dict, quote_text: str,
-                        timeout_minutes: int) -> bool:
+def send_quote_draft(token: str, chat_id: str, target: dict, quote_text: str) -> None:
     link = f"https://x.com/i/status/{target['id']}"
     m = target.get("public_metrics", {})
     text = (
         f"quote opportunity ({m.get('like_count', 0)} likes, "
         f"{m.get('reply_count', 0)} replies):\n\n"
         f"{target['text']}\n{link}\n\n"
-        f"drafted quote post:\n{quote_text}"
+        f"drafted comment (open the post and quote it yourself):\n{quote_text}"
     )
-    sent = api(token, "sendMessage", chat_id=chat_id, text=text,
-               reply_markup={"inline_keyboard": [[
-                   {"text": "post quote", "callback_data": "reply:yes"},
-                   {"text": "skip", "callback_data": "reply:no"},
-               ]]})["result"]
-    message_id = sent["message_id"]
-    deadline = time.time() + timeout_minutes * 60
-    offset = None
-    while time.time() < deadline:
-        params = {"timeout": POLL_SECONDS, "allowed_updates": ["callback_query"]}
-        if offset is not None:
-            params["offset"] = offset
-        for u in api(token, "getUpdates", **params)["result"]:
-            offset = u["update_id"] + 1
-            cq = u.get("callback_query")
-            if not cq or cq.get("message", {}).get("message_id") != message_id:
-                continue
-            api(token, "answerCallbackQuery", callback_query_id=cq["id"])
-            approved = cq.get("data") == "reply:yes"
-            api(token, "editMessageText", chat_id=chat_id, message_id=message_id,
-                text=text + ("\n\n-> posting" if approved else "\n\n-> skipped"))
-            return approved
-    api(token, "editMessageText", chat_id=chat_id, message_id=message_id,
-        text=text + "\n\n-> timed out, skipped")
-    return False
+    api(token, "sendMessage", chat_id=chat_id, text=text)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dry-run", action="store_true", help="search and draft only, no telegram or publish")
-    parser.add_argument("--timeout-minutes", type=int, default=DEFAULT_TIMEOUT_MINUTES)
+    parser.add_argument("--dry-run", action="store_true", help="search and draft only, no telegram")
     args = parser.parse_args(argv)
 
     cfg = load_config()
@@ -207,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not args.dry_run and (not token or not chat_id):
-        print("quotes: telegram not configured, skipping (quotes always need approval)")
+        print("quotes: telegram not configured, skipping")
         return 0
 
     for target in targets:
@@ -216,13 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  draft: {quote_text!r}")
         if args.dry_run:
             continue
-        if approve_on_telegram(token, chat_id, target, quote_text, args.timeout_minutes):
-            quote_id = publish_quote(quote_text, target["id"])
-            if quote_id:
-                log_quote(target, quote_text, quote_id)
-                print(f"  published: https://x.com/i/status/{quote_id}")
-        else:
-            print("  skipped")
+        send_quote_draft(token, chat_id, target, quote_text)
+        log_quote(target, quote_text)
     return 0
 
 
