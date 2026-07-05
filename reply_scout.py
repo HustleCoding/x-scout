@@ -92,7 +92,7 @@ def search_targets(cfg: dict, limit: int = MAX_TARGETS) -> list[dict]:
         params={
             "query": query,
             "max_results": 25,
-            "tweet.fields": "public_metrics,author_id,created_at",
+            "tweet.fields": "public_metrics,author_id,created_at,reply_settings",
         },
         headers={"Authorization": f"Bearer {app_bearer()}"},
         timeout=30,
@@ -110,6 +110,8 @@ def search_targets(cfg: dict, limit: int = MAX_TARGETS) -> list[dict]:
         if author in skip_authors or author in seen_authors or author == me:
             continue
         if traction(t.get("public_metrics", {})) < 5:
+            continue
+        if t.get("reply_settings", "everyone") != "everyone":
             continue
         seen_authors.add(author)
         targets.append(t)
@@ -137,7 +139,7 @@ def draft_reply(cfg: dict, target_text: str) -> str:
                           model=cfg.get("writer_model") or cfg["model"]))
 
 
-def publish_reply(text: str, in_reply_to: str) -> str:
+def publish_reply(text: str, in_reply_to: str) -> str | None:
     resp = requests.post(
         f"{X_API}/tweets",
         json={"text": text, "reply": {"in_reply_to_tweet_id": in_reply_to}},
@@ -145,7 +147,8 @@ def publish_reply(text: str, in_reply_to: str) -> str:
         timeout=30,
     )
     if resp.status_code not in (200, 201):
-        raise SystemExit(f"reply failed ({resp.status_code}): {resp.text}")
+        print(f"  reply failed ({resp.status_code}): {resp.text}")
+        return None
     return resp.json()["data"]["id"]
 
 
@@ -212,8 +215,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if approve_on_telegram(token, chat_id, target, reply_text, args.timeout_minutes):
             reply_id = publish_reply(reply_text, target["id"])
-            log_reply(target, reply_text, reply_id)
-            print(f"  published: https://x.com/i/status/{reply_id}")
+            if reply_id:
+                log_reply(target, reply_text, reply_id)
+                print(f"  published: https://x.com/i/status/{reply_id}")
         else:
             print("  skipped")
     return 0
