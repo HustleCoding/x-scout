@@ -87,7 +87,9 @@ jobs:
           if [ -n "$(git status --porcelain candidates.jsonl posted.jsonl ideas.jsonl)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add candidates.jsonl posted.jsonl ideas.jsonl
+            for f in candidates.jsonl posted.jsonl ideas.jsonl; do
+              [ ! -e "$f" ] || git add "$f"
+            done
             git commit -m "log: record candidates, metrics, and ideas"
             git push
           fi
@@ -124,7 +126,9 @@ jobs:
           if [ -n "$(git status --porcelain config.json candidates.jsonl)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add config.json candidates.jsonl
+            for f in config.json candidates.jsonl; do
+              [ ! -e "$f" ] || git add "$f"
+            done
             git commit -m "log: record taste example / regenerated candidates"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push
