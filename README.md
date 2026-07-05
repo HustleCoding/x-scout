@@ -10,7 +10,7 @@ Posts to X (x.com) two ways:
 
 ## Daily automation (scout.py)
 
-`.github/workflows/daily-post.yml` runs every day at 09:17 UTC in two stages:
+`.github/workflows/daily-post.yml` runs every day at 13:17 UTC (after 3pm Romania time) in two stages:
 
 1. **generate** — creates several candidate posts (writer model, one format
    each: story, number, unpopular opinion, ...), grounded in recent public
