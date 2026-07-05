@@ -24,6 +24,12 @@ Posts to X (x.com) two ways:
    performers. A weekly job (`weekly-review.yml`, Sundays) has the LLM write
    an "editor's memo" (`memo.md`) from the data — concrete directives that
    steer future posts.
+   The run also collects any messages you sent the bot since the last run
+   into an idea inbox (`ideas.jsonl`) — text the bot a raw thought anytime
+   and the next generation drafts candidates from your ideas first (ideas
+   stay active for 7 days). It then sends you a morning briefing on
+   Telegram: your latest post's metrics, your recent repo activity, and
+   today's Hacker News front page.
 2. **approve** — if `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets are
    set, the bot messages you the top 3 candidates with buttons: tap 1/2/3 to
    post that one, "regenerate" for a fresh batch (up to 3 times), or "skip

@@ -41,6 +41,20 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: python scout.py --update-metrics
 
+      - name: Collect ideas from Telegram
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python tg_approve.py --intake
+
+      - name: Send morning briefing
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scout.py --briefing
+
       - name: Generate post
         id: gen
         env:
@@ -69,11 +83,11 @@ jobs:
 
       - name: Commit candidates log and metrics
         run: |
-          if [ -n "$(git status --porcelain candidates.jsonl posted.jsonl)" ]; then
+          if [ -n "$(git status --porcelain candidates.jsonl posted.jsonl ideas.jsonl)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add candidates.jsonl posted.jsonl
-            git commit -m "log: record candidates and metrics"
+            git add candidates.jsonl posted.jsonl ideas.jsonl
+            git commit -m "log: record candidates, metrics, and ideas"
             git push
           fi
 

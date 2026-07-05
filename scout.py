@@ -37,6 +37,7 @@ CANDIDATES_LOG_PATH = ROOT / "candidates.jsonl"
 UNSLOP_PATH = ROOT / "unslop.md"
 JUDGE_PATH = ROOT / "judge.md"
 MEMO_PATH = ROOT / "memo.md"
+IDEAS_PATH = ROOT / "ideas.jsonl"
 
 X_API = "https://api.x.com/2"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
@@ -149,25 +150,35 @@ def clean_text(text: str) -> str:
     return text[:MAX_CHARS]
 
 
-def hn_front_page(limit: int = 8) -> str:
+def hn_items(limit: int = 8) -> list[dict]:
     try:
         ids = requests.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=15
         ).json()[:limit]
-        titles = []
+        items = []
         for i in ids:
             item = requests.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{i}.json", timeout=10
             ).json()
             title = (item or {}).get("title", "")
             if title:
-                titles.append(title)
+                items.append(
+                    {
+                        "title": title,
+                        "url": item.get("url")
+                        or f"https://news.ycombinator.com/item?id={i}",
+                    }
+                )
     except (requests.RequestException, ValueError):
-        return ""
-    return "\n".join(f"- {t}" for t in titles)
+        return []
+    return items
 
 
-def github_activity(cfg: dict, limit: int = 12) -> str:
+def hn_front_page(limit: int = 8) -> str:
+    return "\n".join(f"- {i['title']}" for i in hn_items(limit))
+
+
+def github_activity(cfg: dict, limit: int = 12, links: bool = False) -> str:
     user = cfg.get("github_user", "")
     if not user:
         return ""
@@ -182,6 +193,7 @@ def github_activity(cfg: dict, limit: int = 12) -> str:
     except requests.RequestException:
         return ""
     lines: list[str] = []
+    repos: list[str] = []
     for e in events:
         repo = e.get("repo", {}).get("name", "")
         payload = e.get("payload", {})
@@ -190,14 +202,23 @@ def github_activity(cfg: dict, limit: int = 12) -> str:
                 msg = c.get("message", "").splitlines()[0]
                 if msg:
                     lines.append(f"commit to {repo}: {msg}")
+                    repos.append(repo)
         elif e.get("type") == "PullRequestEvent":
             title = payload.get("pull_request", {}).get("title", "")
             if title:
                 lines.append(f"PR ({payload.get('action', '')}) in {repo}: {title}")
+                repos.append(repo)
         elif e.get("type") == "CreateEvent" and payload.get("ref_type") == "repository":
             lines.append(f"created repo {repo}")
+            repos.append(repo)
         if len(lines) >= limit:
             break
+    lines, repos = lines[:limit], repos[:limit]
+    if links:
+        lines = [
+            f"{l}\n  https://github.com/{r}" if r else l
+            for l, r in zip(lines, repos)
+        ]
     return "\n".join(f"- {l}" for l in lines)
 
 
@@ -325,6 +346,70 @@ def self_review(cfg: dict) -> int:
     return 0
 
 
+def load_ideas(days: int = 7, limit: int = 5) -> list[str]:
+    if not IDEAS_PATH.exists():
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    ideas = []
+    for line in IDEAS_PATH.read_text().strip().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        try:
+            ts = datetime.fromisoformat(entry.get("date", "")).timestamp()
+        except ValueError:
+            continue
+        if ts >= cutoff and entry.get("text"):
+            ideas.append(entry["text"])
+    return ideas[-limit:]
+
+
+def briefing(cfg: dict) -> int:
+    """Send a morning digest to Telegram: post metrics, HN, repo activity."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        print("briefing: telegram not configured, skipping")
+        return 0
+    parts = ["morning briefing\n"]
+    entries = load_history_entries()
+    measured = [e for e in entries if e.get("metrics")]
+    if entries:
+        last = entries[-1]
+        m = last.get("metrics") or {}
+        stats = (
+            f" ({m.get('impression_count', 0)} views, {m.get('like_count', 0)} likes, "
+            f"{m.get('reply_count', 0)} replies)"
+            if m
+            else ""
+        )
+        link = f"\nhttps://x.com/i/status/{last['tweet_id']}" if last.get("tweet_id") else ""
+        parts.append(f"latest post{stats}:\n{last['text']}{link}\n")
+    if len(measured) >= 2:
+        best = max(measured, key=lambda e: engagement_score(e["metrics"]))
+        if best is not entries[-1]:
+            link = f"\nhttps://x.com/i/status/{best['tweet_id']}" if best.get("tweet_id") else ""
+            parts.append(f"all-time top performer:\n{best['text']}{link}\n")
+    activity = github_activity(cfg, limit=6, links=True)
+    if activity:
+        parts.append(f"your recent work:\n{activity}\n")
+    news = "\n".join(f"- {i['title']}\n  {i['url']}" for i in hn_items(limit=5))
+    if news:
+        parts.append(f"on hacker news:\n{news}\n")
+    ideas = load_ideas()
+    if ideas:
+        parts.append(f"ideas in the inbox ({len(ideas)}): today's candidates will draw from them.")
+    resp = requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": "\n".join(parts)[:4000]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print("briefing: sent")
+    return 0
+
+
 def rejected_winners(limit: int = 10) -> list[str]:
     """Winners from past runs that never made it into posted.jsonl."""
     if not CANDIDATES_LOG_PATH.exists():
@@ -404,6 +489,15 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         if examples
         else ""
     )
+    ideas = load_ideas()
+    ideas_block = (
+        "\nRaw ideas from the author (TOP priority: develop at least half the "
+        "candidates from these, in the author's voice):\n"
+        + "\n".join(f"- {i}" for i in ideas)
+        + "\n"
+        if ideas
+        else ""
+    )
     rejected = rejected_winners()
     rejected_block = (
         "\nPast drafts the author REJECTED (wrong taste, do not write like these):\n"
@@ -419,7 +513,7 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
+        f"{ideas_block}{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
@@ -515,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update-metrics", action="store_true", help="fetch engagement metrics for recent posts, no post")
     parser.add_argument("--self-review", action="store_true", help="write an editor's memo from recent performance, no post")
     parser.add_argument("--candidates-out", metavar="FILE", help="write the top 3 scored candidates as JSON to FILE")
+    parser.add_argument("--briefing", action="store_true", help="send a morning digest to Telegram, no post")
     args = parser.parse_args(argv)
 
     if args.verify:
@@ -523,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
         return update_metrics()
     if args.self_review:
         return self_review(load_config())
+    if args.briefing:
+        return briefing(load_config())
 
     cfg = load_config()
     text = (
