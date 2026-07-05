@@ -52,10 +52,10 @@ It can also be triggered manually from the Actions tab, optionally as a dry
 run (generate only, no publish job).
 
 A second daily workflow (`daily-replies.yml`, 15:47 UTC) grows the account
-through replies: it searches recent X posts for `reply_keywords` in
-`config.json`, ranks them by traction, drafts a reply for the top 2 (never
+through quote posts: it searches recent X posts for `reply_keywords` in
+`config.json`, ranks them by traction, drafts a quote post for the top 2 (never
 the same author twice in a week — `replied.jsonl`), and asks you on Telegram
-per reply ("post reply" / "skip"). Nothing is ever replied without your tap;
+per quote ("post quote" / "skip"). Nothing is ever posted without your tap;
 if Telegram isn't configured the job does nothing. Note: the search endpoint
 is a paid X API read (~25 tweets/day).
 

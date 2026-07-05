@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Find high-traction posts on X in our topics and reply with approval.
+"""Find high-traction posts on X in our topics and quote them with approval.
 
 Daily: search recent posts for the configured keywords, rank by traction,
-draft a reply for the top targets, ask on Telegram per reply, publish the
-approved ones. Every reply is logged to replied.jsonl and an author is never
-replied to twice within a week.
+draft a quote post for the top targets, ask on Telegram per quote, publish
+the approved ones. Every quote is logged to replied.jsonl and an author is
+never quoted twice within a week. (Quote posts, not replies: X's API blocks
+replying to conversations the account hasn't been engaged in.)
 
     python reply_scout.py --dry-run    # search + draft, print, no telegram/publish
     python reply_scout.py              # full flow
@@ -55,14 +56,14 @@ def recent_authors(days: int = AUTHOR_COOLDOWN_DAYS) -> set[str]:
     return authors
 
 
-def log_reply(target: dict, reply_text: str, reply_id: str) -> None:
+def log_quote(target: dict, quote_text: str, quote_id: str) -> None:
     entry = {
         "date": datetime.now(timezone.utc).isoformat(),
         "target_id": target["id"],
         "author_id": target["author_id"],
         "target_text": target["text"],
-        "reply": reply_text,
-        "reply_id": reply_id,
+        "quote": quote_text,
+        "quote_id": quote_id,
     }
     with REPLIED_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -120,51 +121,53 @@ def search_targets(cfg: dict, limit: int = MAX_TARGETS) -> list[dict]:
     return targets
 
 
-def draft_reply(cfg: dict, target_text: str) -> str:
+def draft_quote(cfg: dict, target_text: str) -> str:
     unslop = load_unslop()
     style = f"\n\nStyle guide:\n{unslop}\n" if unslop else ""
     prompt = (
-        f"You write replies on X (twitter). Persona: {cfg['persona']}\n\n"
+        f"You write quote posts on X (twitter): your commentary shown above "
+        f"someone else's post. Persona: {cfg['persona']}\n\n"
         f"Someone posted:\n{target_text}\n\n"
-        f"Write ONE reply under 260 characters that adds something real: a "
+        f"Write ONE quote-post comment under 260 characters that adds something real: a "
         f"specific experience, a sharp question, or a genuinely different "
         f"angle. Never flatter, never summarize their post back, never pitch "
         f"anything. NEVER invent specific incidents, numbers, or events that "
         f"did not happen; opinions and questions are safer than fake stories. "
         f"If you have nothing real to add, still give your best "
-        f"attempt. No hashtags, no emojis.{style}\n"
-        f"Reply with ONLY the reply text, no quotes."
+        f"attempt. Do not address the author directly; you're commenting to "
+        f"your own audience. No hashtags, no emojis.{style}\n"
+        f"Reply with ONLY the comment text, no quotation marks."
     )
     return clean_text(llm(cfg, prompt, max_tokens=200, temperature=0.9,
                           model=cfg.get("writer_model") or cfg["model"]))
 
 
-def publish_reply(text: str, in_reply_to: str) -> str | None:
+def publish_quote(text: str, quoted_id: str) -> str | None:
     resp = requests.post(
         f"{X_API}/tweets",
-        json={"text": text, "reply": {"in_reply_to_tweet_id": in_reply_to}},
+        json={"text": text, "quote_tweet_id": quoted_id},
         auth=x_auth(),
         timeout=30,
     )
     if resp.status_code not in (200, 201):
-        print(f"  reply failed ({resp.status_code}): {resp.text}")
+        print(f"  quote failed ({resp.status_code}): {resp.text}")
         return None
     return resp.json()["data"]["id"]
 
 
-def approve_on_telegram(token: str, chat_id: str, target: dict, reply_text: str,
+def approve_on_telegram(token: str, chat_id: str, target: dict, quote_text: str,
                         timeout_minutes: int) -> bool:
     link = f"https://x.com/i/status/{target['id']}"
     m = target.get("public_metrics", {})
     text = (
-        f"reply opportunity ({m.get('like_count', 0)} likes, "
+        f"quote opportunity ({m.get('like_count', 0)} likes, "
         f"{m.get('reply_count', 0)} replies):\n\n"
         f"{target['text']}\n{link}\n\n"
-        f"drafted reply:\n{reply_text}"
+        f"drafted quote post:\n{quote_text}"
     )
     sent = api(token, "sendMessage", chat_id=chat_id, text=text,
                reply_markup={"inline_keyboard": [[
-                   {"text": "post reply", "callback_data": "reply:yes"},
+                   {"text": "post quote", "callback_data": "reply:yes"},
                    {"text": "skip", "callback_data": "reply:no"},
                ]]})["result"]
     message_id = sent["message_id"]
@@ -198,26 +201,26 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config()
     targets = search_targets(cfg)
     if not targets:
-        print("replies: no suitable targets today")
+        print("quotes: no suitable targets today")
         return 0
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not args.dry_run and (not token or not chat_id):
-        print("replies: telegram not configured, skipping (replies always need approval)")
+        print("quotes: telegram not configured, skipping (quotes always need approval)")
         return 0
 
     for target in targets:
-        reply_text = draft_reply(cfg, target["text"])[:MAX_CHARS]
+        quote_text = draft_quote(cfg, target["text"])[:MAX_CHARS]
         print(f"target https://x.com/i/status/{target['id']}: {target['text'][:80]!r}")
-        print(f"  draft: {reply_text!r}")
+        print(f"  draft: {quote_text!r}")
         if args.dry_run:
             continue
-        if approve_on_telegram(token, chat_id, target, reply_text, args.timeout_minutes):
-            reply_id = publish_reply(reply_text, target["id"])
-            if reply_id:
-                log_reply(target, reply_text, reply_id)
-                print(f"  published: https://x.com/i/status/{reply_id}")
+        if approve_on_telegram(token, chat_id, target, quote_text, args.timeout_minutes):
+            quote_id = publish_quote(quote_text, target["id"])
+            if quote_id:
+                log_quote(target, quote_text, quote_id)
+                print(f"  published: https://x.com/i/status/{quote_id}")
         else:
             print("  skipped")
     return 0
