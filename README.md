@@ -112,6 +112,26 @@ Tune the voice and subject matter in `config.json` (`persona`, `topics`,
 
 ---
 
+# Hot topics radar
+
+`.github/workflows/daily-topics.yml` runs at 06:45 UTC and checks Hacker News,
+Reddit, X, GitHub, and dev.to for fast-moving conversations related to your
+topics. It ranks them by engagement velocity, then uses OpenRouter to cluster
+the signals into five topics with a reason to post, a personal angle, and two
+drafts.
+
+The report is written to `topics.md` and `topics.json`; the history is appended
+to `topics.jsonl`. If Telegram is configured, the bot sends the five topics with
+buttons. Tapping one saves its angle and draft to `ideas.jsonl`, so the next
+daily post run can use it as a seed. Run `python trend_radar.py --dry-run` to
+preview without writing, `--no-telegram` to write files only, or
+`--signals-only` to inspect raw signals.
+
+Tune radar collection with `topic_subreddits`, `topic_x_queries`, and
+`topic_count` in `config.json`.
+
+---
+
 # Browser script (post_vague.py)
 
 Posts a vague message to X (x.com) through the local Brave browser.

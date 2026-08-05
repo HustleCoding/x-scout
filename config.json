@@ -32,5 +32,9 @@
     "the best code review comment i ever got was 'why does this exist'. deleted the whole file",
     "day 40 of building in public: the public is 3 people and one of them is my mom"
   ],
-  "candidates": 8
+  "candidates": 8,
+  "topic_subreddits": ["LocalLLaMA", "MachineLearning", "indiehackers", "SaaS", "ExperiencedDevs", "programming"],
+  "topic_x_queries": 3,
+  "topic_count": 5,
+  "topic_telegram_wait_minutes": 10
 }

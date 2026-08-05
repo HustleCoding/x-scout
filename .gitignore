@@ -3,6 +3,8 @@ brave-profile/
 
 # Python
 venv/
+topics.json
+topics.md
 __pycache__/
 *.pyc
 
