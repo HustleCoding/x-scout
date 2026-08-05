@@ -1,8 +1,9 @@
 name: Daily replies
 
 on:
-  schedule:
-    - cron: "47 15 * * *" # 15:47 UTC daily (17:47/18:47 Romania time)
+  # paused: X API credits exhausted. Restore with:
+  # schedule:
+  #   - cron: "47 15 * * *" # 15:47 UTC daily (17:47/18:47 Romania time)
   workflow_dispatch:
     inputs:
       dry_run:
