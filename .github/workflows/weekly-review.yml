@@ -1,8 +1,9 @@
 name: Weekly self-review
 
 on:
-  schedule:
-    - cron: "47 12 * * 0" # Sundays 12:47 UTC, before the daily post
+  # paused: X API credits exhausted. Restore with:
+  # schedule:
+  #   - cron: "47 12 * * 0" # Sundays 12:47 UTC, before the daily post
   workflow_dispatch:
 
 permissions:
