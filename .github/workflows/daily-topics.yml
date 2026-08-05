@@ -1,0 +1,55 @@
+name: Daily topics
+
+on:
+  schedule:
+    - cron: "45 06 * * *" # 06:45 UTC daily (08:45/09:45 Romania time)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-post
+  cancel-in-progress: false
+
+jobs:
+  topics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run hot topics radar
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python trend_radar.py
+
+      - name: Add report to summary
+        run: |
+          if [ -f topics.md ]; then
+            cat topics.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Commit topics and selected ideas
+        run: |
+          if [ -n "$(git status --porcelain topics.jsonl ideas.jsonl)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            for f in topics.jsonl ideas.jsonl; do
+              [ ! -e "$f" ] || git add "$f"
+            done
+            git commit -m "log: record hot topics"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi

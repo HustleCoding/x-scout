@@ -38,6 +38,8 @@ UNSLOP_PATH = ROOT / "unslop.md"
 JUDGE_PATH = ROOT / "judge.md"
 MEMO_PATH = ROOT / "memo.md"
 IDEAS_PATH = ROOT / "ideas.jsonl"
+TOPICS_PATH = ROOT / "topics.json"
+TOPICS_LOG_PATH = ROOT / "topics.jsonl"
 
 X_API = "https://api.x.com/2"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
@@ -73,6 +75,17 @@ DEFAULT_CONFIG = {
         "building in public",
     ],
     "candidates": 8,
+    "topic_subreddits": [
+        "LocalLLaMA",
+        "MachineLearning",
+        "indiehackers",
+        "SaaS",
+        "ExperiencedDevs",
+        "programming",
+    ],
+    "topic_x_queries": 3,
+    "topic_count": 5,
+    "topic_telegram_wait_minutes": 10,
 }
 
 
@@ -317,6 +330,23 @@ def load_memo() -> str:
     return ""
 
 
+def load_trending_topics(limit: int = 3) -> list[dict]:
+    paths = [TOPICS_PATH] if TOPICS_PATH.exists() else [TOPICS_LOG_PATH]
+    for path in paths:
+        if not path.exists():
+            continue
+        raw_entries = [path.read_text()] if path == TOPICS_PATH else path.read_text().splitlines()
+        for raw in reversed(raw_entries):
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            topics = entry.get("topics", [])
+            if topics:
+                return [topic for topic in topics if isinstance(topic, dict)][:limit]
+    return []
+
+
 def self_review(cfg: dict) -> int:
     """Write an editor's memo from recent performance and taste signals."""
     measured = [e for e in load_history_entries() if e.get("metrics")]
@@ -397,6 +427,16 @@ def briefing(cfg: dict) -> int:
     news = "\n".join(f"- {i['title']}\n  {i['url']}" for i in hn_items(limit=5))
     if news:
         parts.append(f"on hacker news:\n{news}\n")
+    trending = load_trending_topics()
+    if trending:
+        parts.append(
+            "trending topics:\n"
+            + "\n".join(
+                f"- {topic.get('headline', '')}: {topic.get('angle', '')}"
+                for topic in trending
+            )
+            + "\n"
+        )
     ideas = load_ideas()
     if ideas:
         parts.append(f"ideas in the inbox ({len(ideas)}): today's candidates will draw from them.")
@@ -481,6 +521,17 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         if news
         else ""
     )
+    trending = load_trending_topics()
+    trending_block = (
+        "\nTrending right now (use only when you have a genuine personal angle):\n"
+        + "\n".join(
+            f"- {topic.get('headline', '')}: {topic.get('angle', '')}"
+            for topic in trending
+        )
+        + "\n"
+        if trending
+        else ""
+    )
     examples = (cfg.get("examples") or [])[-10:]
     examples_block = (
         "\nPosts whose taste/rhythm to match (do not copy content):\n"
@@ -513,7 +564,7 @@ def generate_candidates(cfg: dict, activity: str = "", news: str = "") -> list[s
         f"You write posts for X (twitter). Persona: {cfg['persona']}\n\n"
         f"Today's topics (pick per candidate): {', '.join(topics)}\n\n"
         f"Recent posts (do NOT repeat these ideas or phrasings):\n{recent}\n"
-        f"{ideas_block}{activity_block}{news_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
+        f"{ideas_block}{activity_block}{news_block}{trending_block}{examples_block}{rejected_block}{performance}{memo_block}{style}\n"
         f"Write {n} candidate posts, each under 260 characters. Use these "
         f"formats, one per candidate in order:\n{format_lines}\n\n"
         f"Each should feel like a real thought, not marketing copy. "
