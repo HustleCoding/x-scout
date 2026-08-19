@@ -48,6 +48,7 @@ SPAM_MARKERS = ("dm me", "apply here", "we're hiring", "job alert", "#hiring",
 DEFAULT_SUBREDDITS = ["SaaS", "microsaas", "startups", "Entrepreneur", "smallbusiness", "automate"]
 
 DEFAULT_LEAD_SOURCES = ("x", "reddit", "hn")
+DEFAULT_HN_DAYS = 2
 
 DEFAULT_REDDIT_NEED_MARKERS = (
     "manual", "manually", "automation", "automate", "ai feature",
@@ -57,7 +58,8 @@ DEFAULT_REDDIT_NEED_MARKERS = (
 
 DEFAULT_HN_QUERIES = (
     '"we do this manually"', '"manual process"', '"how do you automate"',
-    '"want to add an AI feature"', '"workflow automation"', '"internal tool"',
+    '"want to add an AI feature"', '"workflow automation"',
+    '"we still use spreadsheets"', '"manual data entry"',
 )
 
 DEFAULT_BUYER_CONTEXT = (
@@ -66,10 +68,13 @@ DEFAULT_BUYER_CONTEXT = (
     "day-to-day workflow. YES requires first-person evidence that they run the "
     "operation and are suffering a concrete manual, repetitive, AI-heavy, or "
     "automation problem inside it; the problem is costly, slow, or becoming "
-    "urgent. Do not qualify idea-stage projects with nothing built, people "
-    "shopping for the cheapest MVP, builders discussing tools or architecture "
-    "they made, developers or agencies advertising services, recruiters posting "
-    "jobs, equity-only or barter offers, or general opinion posts."
+    "urgent. The author must own the business or operation the workflow belongs "
+    "to; someone describing work they perform for clients as a service provider, "
+    "freelancer, or contractor is a NO. Do not qualify idea-stage projects with "
+    "nothing built, people shopping for the cheapest MVP, builders discussing "
+    "tools or architecture they made, developers or agencies advertising "
+    "services, recruiters posting jobs, equity-only or barter offers, or "
+    "general opinion posts."
 )
 
 FORBIDDEN_DRAFT_PATTERNS = (
@@ -211,9 +216,11 @@ def search_reddit(cfg: dict) -> list[dict]:
 
 
 def search_hn(cfg: dict) -> list[dict]:
-    since = int(time.time()) - 2 * 86400
+    lookback_days = int(cfg.get("hn_days") or DEFAULT_HN_DAYS)
+    since = int(time.time()) - lookback_days * 86400
     leads = []
     queries = cfg.get("hn_queries") or DEFAULT_HN_QUERIES
+    print(f"leads: hn lookback: {lookback_days} days")
     for q in queries:
         try:
             resp = requests.get(

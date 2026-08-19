@@ -11,8 +11,9 @@
     "building in public"
   ],
   "lead_pitch_context": "Florin ships the manual or AI-heavy workflow stuck inside an already-live product into production in 10 business days. Proof he can cite without inventing anything: an invoice PDF-to-structured-JSON pipeline, an LLM Google-review responder, and founder-os, an agentic operations cockpit he built and runs himself.",
-  "lead_buyer_context": "The right buyer is the owner or operator of an already-live product, service business, or internal operation, and speaks from their own day-to-day workflow. YES requires first-person evidence that they run the operation and are suffering a concrete manual, repetitive, AI-heavy, or automation problem inside it; the problem is costly, slow, or becoming urgent. Do not qualify idea-stage projects with nothing built, people shopping for the cheapest MVP, builders discussing tools or architecture they made, developers or agencies advertising services, recruiters posting jobs, equity-only or barter offers, or general opinion posts.",
+  "lead_buyer_context": "The right buyer is the owner or operator of an already-live product, service business, or internal operation, and speaks from their own day-to-day workflow. YES requires first-person evidence that they run the operation and are suffering a concrete manual, repetitive, AI-heavy, or automation problem inside it; the problem is costly, slow, or becoming urgent. The author must own the business or operation the workflow belongs to; someone describing work they perform for clients as a service provider, freelancer, or contractor is a NO. Do not qualify idea-stage projects with nothing built, people shopping for the cheapest MVP, builders discussing tools or architecture they made, developers or agencies advertising services, recruiters posting jobs, equity-only or barter offers, or general opinion posts.",
   "lead_sources": ["reddit", "hn"],
+  "hn_days": 7,
   "lead_subreddits": ["SaaS", "microsaas", "startups", "Entrepreneur", "smallbusiness", "automate"],
   "lead_keywords": [
     "\"we do this manually\"",
@@ -42,7 +43,8 @@
     "\"how do you automate\"",
     "\"want to add an AI feature\"",
     "\"workflow automation\"",
-    "\"we still use spreadsheets\""
+    "\"we still use spreadsheets\"",
+    "\"manual data entry\""
   ],
   "reply_keywords": [
     "ai agents",
