@@ -61,13 +61,15 @@ DEFAULT_HN_QUERIES = (
 )
 
 DEFAULT_BUYER_CONTEXT = (
-    "The author already has a live product, business, users, customers, "
-    "revenue, or an existing internal process. They have a manual, repetitive, "
-    "AI-heavy, or automation opportunity inside that live operation, and the "
-    "problem is costly, slow, or becoming urgent. Do not qualify idea-stage "
-    "projects with nothing built, people shopping for the cheapest MVP, "
-    "developers or agencies advertising services, recruiters posting jobs, "
-    "equity-only or barter offers, or general opinion posts."
+    "The right buyer is the owner or operator of an already-live product, "
+    "service business, or internal operation, and speaks from their own "
+    "day-to-day workflow. YES requires first-person evidence that they run the "
+    "operation and are suffering a concrete manual, repetitive, AI-heavy, or "
+    "automation problem inside it; the problem is costly, slow, or becoming "
+    "urgent. Do not qualify idea-stage projects with nothing built, people "
+    "shopping for the cheapest MVP, builders discussing tools or architecture "
+    "they made, developers or agencies advertising services, recruiters posting "
+    "jobs, equity-only or barter offers, or general opinion posts."
 )
 
 FORBIDDEN_DRAFT_PATTERNS = (
@@ -147,7 +149,7 @@ def search_x(cfg: dict) -> list[dict]:
             }
             for t in tweets
         ]
-    except (Exception, SystemExit) as e:
+    except (SystemExit, requests.RequestException, KeyError, ValueError) as e:
         print(f"leads: x search unavailable ({e}); continuing without x")
         return []
 
@@ -323,7 +325,9 @@ def draft_pitch(cfg: dict, lead_text: str) -> str:
         "background or proof unless the post explicitly asks. NEVER invent past "
         "projects or numbers. Reply with ONLY the reply text."
     )
-    for attempt in range(2):
+    best_draft = ""
+    best_score = (-1, -1, -1, -1)
+    for attempt in range(1, 3):
         draft = clean_text(llm(
             cfg, prompt, max_tokens=180, temperature=0.8,
             model=cfg.get("writer_model") or cfg["model"],
@@ -333,19 +337,27 @@ def draft_pitch(cfg: dict, lead_text: str) -> str:
         has_forbidden = (
             any(pattern in lower for pattern in FORBIDDEN_DRAFT_PATTERNS)
             or "#" in draft
-            or re.search(r"[$€£]\s*\d|\b(?:\d{3,}|five hundred|three thousand)\b", lower)
+            or re.search(r"[$€£]\s*\d|\b(?:five hundred|three thousand)\b", lower)
         )
         asks_why_now = (
             "why" in lower
             or "what changed" in lower
             or any(term in lower for term in ("today", "now", "urgent", "volume", "cost"))
         )
+        score = (
+            int(not has_forbidden),
+            int(draft.endswith("?") and punctuation.count("?") == 1),
+            int(asks_why_now),
+            len(draft),
+        )
+        if score > best_score:
+            best_draft, best_score = draft, score
         if (
             draft.endswith("?")
-            and punctuation == ["?"]
-            and asks_why_now
+            and punctuation.count("?") == 1
             and not has_forbidden
         ):
+            print(f"leads: draft validation passed on attempt {attempt}")
             return draft
         prompt += (
             "\nYour previous draft broke a rule. Rewrite it as exactly two "
@@ -353,7 +365,8 @@ def draft_pitch(cfg: dict, lead_text: str) -> str:
             "about why this workflow matters now. Use one final question mark "
             "only, with no offer, price, link, hashtag, emoji, or sales language."
         )
-    return draft
+    print("leads: draft validation fallback after 2 attempts")
+    return best_draft
 
 
 def send_lead(token: str, chat_id: str, lead: dict, pitch: str) -> None:
