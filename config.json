@@ -10,14 +10,39 @@
     "developer tools that feel magical",
     "building in public"
   ],
-  "lead_pitch_context": "Florin, a solo developer who builds custom web apps for founders in 2 weeks for a fixed $4,999 (design, build, launch; client owns the code)",
-  "lead_subreddits": ["forhire", "startups", "SaaS", "Entrepreneur", "nocode"],
+  "lead_pitch_context": "Florin ships the manual or AI-heavy workflow stuck inside an already-live product into production in 10 business days. Proof he can cite without inventing anything: an invoice PDF-to-structured-JSON pipeline, an LLM Google-review responder, and founder-os, an agentic operations cockpit he built and runs himself.",
+  "lead_buyer_context": "The right buyer already has a live product, business, users, customers, revenue, or an existing internal process. They are dealing with a manual, repetitive, AI-heavy, or automation opportunity inside that live operation, and the problem is costly, slow, or becoming urgent. Do not qualify idea-stage projects with nothing built, people shopping for the cheapest MVP, developers or agencies advertising services, recruiters posting jobs, equity-only or barter offers, or general opinion posts.",
+  "lead_sources": ["reddit", "hn"],
+  "lead_subreddits": ["SaaS", "microsaas", "startups", "Entrepreneur", "smallbusiness", "automate"],
   "lead_keywords": [
-    "\"looking for a developer\" (mvp OR app OR saas)",
-    "\"need a developer to build\"",
-    "\"need someone to build\" (app OR mvp OR saas)",
-    "\"looking for a technical cofounder\"",
-    "\"who can build my mvp\""
+    "\"we do this manually\"",
+    "\"manual process\" automation",
+    "\"want to add an AI feature\"",
+    "\"looking for automation\" product",
+    "\"workflow bottleneck\"",
+    "\"stuck\" \"AI\" workflow"
+  ],
+  "reddit_need_markers": [
+    "manual",
+    "manually",
+    "automation",
+    "automate",
+    "ai feature",
+    "ai workflow",
+    "repetitive",
+    "bottleneck",
+    "stuck",
+    "looking for help",
+    "need help",
+    "need someone"
+  ],
+  "hn_queries": [
+    "\"we do this manually\"",
+    "\"manual process\"",
+    "\"how do you automate\"",
+    "\"want to add an AI feature\"",
+    "\"workflow automation\"",
+    "\"internal tool\""
   ],
   "reply_keywords": [
     "ai agents",

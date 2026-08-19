@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Find people who need software built and send leads to Telegram.
+"""Find operators with stuck workflows and send leads to Telegram.
 
-Daily: search X (config lead_keywords), Reddit (config lead_subreddits), and
-Hacker News (Algolia) for client-need posts, drop spam and already-seen leads
-(leads.jsonl), draft a short pitch for each, and send them to Telegram.
+Daily: search configured sources for operators with manual or AI-heavy
+workflows, drop spam and already-seen leads (leads.jsonl), draft a diagnostic
+reply for each, and send them to Telegram.
 Nothing is ever posted by the agent — you reply from your own account.
 
     python lead_scout.py --dry-run    # search + draft, print, no telegram
@@ -34,25 +34,47 @@ MAX_LEADS = 5
 AUTHOR_COOLDOWN_DAYS = 30
 
 DEFAULT_KEYWORDS = [
-    '"looking for an ai engineer"',
-    '"need help building an ai"',
-    '"hire an ai engineer"',
-    '"need an ai developer"',
-    '"build me an ai agent"',
+    '"we do this manually"',
+    '"manual process" automation',
+    '"want to add an AI feature"',
+    '"workflow bottleneck"',
+    '"stuck" "AI" workflow',
 ]
 
 SPAM_MARKERS = ("dm me", "apply here", "we're hiring", "job alert", "#hiring",
                 "open to work", "job hunting", "freelancer", "portfolio",
                 "[for hire]", "for hire]")
 
-DEFAULT_SUBREDDITS = ["forhire", "startups", "SaaS", "Entrepreneur", "nocode"]
+DEFAULT_SUBREDDITS = ["SaaS", "microsaas", "startups", "Entrepreneur", "smallbusiness", "automate"]
 
-REDDIT_NEED_MARKERS = ("[hiring]", "looking for", "need a dev", "need someone",
-                       "need help build", "who can build", "build my",
-                       "technical cofounder", "technical co-founder", "mvp")
+DEFAULT_LEAD_SOURCES = ("x", "reddit", "hn")
 
-HN_QUERIES = ('"looking for a developer"', '"need a developer"',
-              '"need someone to build"', '"technical cofounder"')
+DEFAULT_REDDIT_NEED_MARKERS = (
+    "manual", "manually", "automation", "automate", "ai feature",
+    "ai workflow", "repetitive", "bottleneck", "stuck", "looking for help",
+    "need help", "need someone",
+)
+
+DEFAULT_HN_QUERIES = (
+    '"we do this manually"', '"manual process"', '"how do you automate"',
+    '"want to add an AI feature"', '"workflow automation"', '"internal tool"',
+)
+
+DEFAULT_BUYER_CONTEXT = (
+    "The author already has a live product, business, users, customers, "
+    "revenue, or an existing internal process. They have a manual, repetitive, "
+    "AI-heavy, or automation opportunity inside that live operation, and the "
+    "problem is costly, slow, or becoming urgent. Do not qualify idea-stage "
+    "projects with nothing built, people shopping for the cheapest MVP, "
+    "developers or agencies advertising services, recruiters posting jobs, "
+    "equity-only or barter offers, or general opinion posts."
+)
+
+FORBIDDEN_DRAFT_PATTERNS = (
+    "i can build", "we can build", "happy to build", "let me build",
+    "hire me", "dm me", "book a call", "scope day", "founding sprint",
+    "http://", "https://", "www.",
+)
 
 UA = {"User-Agent": "linux:x-scout-leads:v1.0 (by u/hustlecoding)"}
 
@@ -97,41 +119,50 @@ def log_lead(lead: dict, pitch: str) -> None:
 
 
 def search_x(cfg: dict) -> list[dict]:
-    keywords = cfg.get("lead_keywords") or DEFAULT_KEYWORDS
-    query = "(" + " OR ".join(keywords) + ") -is:retweet -is:reply -is:quote lang:en"
-    resp = requests.get(
-        f"{X_API}/tweets/search/recent",
-        params={
-            "query": query,
-            "max_results": 25,
-            "tweet.fields": "public_metrics,author_id,created_at",
-        },
-        headers={"Authorization": f"Bearer {app_bearer()}"},
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        print(f"leads: x search failed ({resp.status_code}): {resp.text}")
+    try:
+        keywords = cfg.get("lead_keywords") or DEFAULT_KEYWORDS
+        query = "(" + " OR ".join(keywords) + ") -is:retweet -is:reply -is:quote lang:en"
+        resp = requests.get(
+            f"{X_API}/tweets/search/recent",
+            params={
+                "query": query,
+                "max_results": 25,
+                "tweet.fields": "public_metrics,author_id,created_at",
+            },
+            headers={"Authorization": f"Bearer {app_bearer()}"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            print(f"leads: x search failed ({resp.status_code}): {resp.text}")
+            return []
+        tweets = resp.json().get("data", [])
+        tweets.sort(key=lambda t: traction(t.get("public_metrics", {})), reverse=True)
+        return [
+            {
+                "id": f"x:{t['id']}",
+                "source": "x",
+                "url": f"https://x.com/i/status/{t['id']}",
+                "text": t["text"],
+                "author": t.get("author_id", ""),
+            }
+            for t in tweets
+        ]
+    except (Exception, SystemExit) as e:
+        print(f"leads: x search unavailable ({e}); continuing without x")
         return []
-    tweets = resp.json().get("data", [])
-    tweets.sort(key=lambda t: traction(t.get("public_metrics", {})), reverse=True)
-    return [
-        {
-            "id": f"x:{t['id']}",
-            "source": "x",
-            "url": f"https://x.com/i/status/{t['id']}",
-            "text": t["text"],
-            "author": t.get("author_id", ""),
-        }
-        for t in tweets
-    ]
 
 
 def search_reddit(cfg: dict) -> list[dict]:
     leads = []
+    markers = tuple(
+        marker.lower()
+        for marker in (cfg.get("reddit_need_markers") or DEFAULT_REDDIT_NEED_MARKERS)
+    )
     for i, sub in enumerate(cfg.get("lead_subreddits") or DEFAULT_SUBREDDITS):
         if i:
             time.sleep(10)  # reddit rate-limits unauthenticated clients hard
         root = None
+        error = ""
         for attempt in range(3):
             try:
                 resp = requests.get(
@@ -139,27 +170,33 @@ def search_reddit(cfg: dict) -> list[dict]:
                     headers=UA, timeout=30,
                 )
                 if resp.status_code == 429:
+                    error = "HTTP 429"
                     time.sleep(15 * (attempt + 1))
                     continue
                 resp.raise_for_status()
                 root = ET.fromstring(resp.content)
                 break
             except (requests.RequestException, ET.ParseError) as e:
+                error = str(e)
                 print(f"leads: reddit r/{sub} failed: {e}")
                 break
         if root is None:
-            print(f"leads: reddit r/{sub} unavailable (rate limited)")
+            print(f"leads: reddit r/{sub} unavailable ({error or 'unknown error'})")
             continue
         ns = {"a": "http://www.w3.org/2005/Atom"}
+        posts_seen = 0
+        matches = 0
         for entry in root.findall("a:entry", ns):
+            posts_seen += 1
             title = entry.findtext("a:title", "", ns)
             link = entry.find("a:link", ns)
             url = link.get("href") if link is not None else ""
             eid = entry.findtext("a:id", url, ns)
             body = html.unescape(re.sub(r"<[^>]+>", " ", entry.findtext("a:content", "", ns)))
             body = re.sub(r"\s+", " ", body).replace("[link] [comments]", "").strip()
-            if not any(m in title.lower() for m in REDDIT_NEED_MARKERS):
+            if not any(marker in title.lower() for marker in markers):
                 continue
+            matches += 1
             leads.append({
                 "id": f"reddit:{eid}",
                 "source": f"reddit r/{sub}",
@@ -167,13 +204,15 @@ def search_reddit(cfg: dict) -> list[dict]:
                 "text": f"{title}\n{body[:400]}",
                 "author": entry.findtext("a:author/a:name", "", ns),
             })
+        print(f"leads: reddit r/{sub}: {posts_seen} posts, {matches} title matches")
     return leads
 
 
 def search_hn(cfg: dict) -> list[dict]:
     since = int(time.time()) - 2 * 86400
     leads = []
-    for q in HN_QUERIES:
+    queries = cfg.get("hn_queries") or DEFAULT_HN_QUERIES
+    for q in queries:
         try:
             resp = requests.get(
                 "https://hn.algolia.com/api/v1/search_by_date",
@@ -186,6 +225,7 @@ def search_hn(cfg: dict) -> list[dict]:
         except (requests.RequestException, ValueError) as e:
             print(f"leads: hn search failed: {e}")
             continue
+        print(f"leads: hn query {q!r}: {len(hits)} hits")
         for h in hits:
             text = h.get("title") or ""
             comment = re.sub(r"<[^>]+>", " ", h.get("comment_text") or "")
@@ -202,7 +242,25 @@ def search_hn(cfg: dict) -> list[dict]:
 
 
 def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
-    candidates = search_x(cfg) + search_reddit(cfg) + search_hn(cfg)
+    sources = [str(source).lower() for source in
+               (cfg.get("lead_sources") or DEFAULT_LEAD_SOURCES)]
+    candidates = []
+    source_counts = {}
+    for source in sources:
+        if source == "x":
+            found = search_x(cfg)
+        elif source == "reddit":
+            found = search_reddit(cfg)
+        elif source in ("hn", "hackernews", "hacker-news"):
+            found = search_hn(cfg)
+        else:
+            print(f"leads: unknown source {source!r}, skipping")
+            continue
+        source_counts[source] = len(found)
+        candidates.extend(found)
+    summary = ", ".join(f"{source}={count}" for source, count in source_counts.items())
+    print(f"leads: sources returned candidates after title/query pre-filter: {summary or 'none'}")
+    print(f"leads: {len(candidates)} candidates reached the qualifier")
     skip, skip_authors = seen_ids()
     leads, seen_now, seen_authors = [], set(), set()
     for c in candidates:
@@ -212,7 +270,9 @@ def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
         author = c.get("author", "")
         if author and (author in skip_authors or author in seen_authors):
             continue
-        if not is_client_lead(cfg, c["text"]):
+        qualified = is_client_lead(cfg, c["text"])
+        print(f"leads: qualifier {'yes' if qualified else 'no'} [{c['source']}] {c['url']}")
+        if not qualified:
             continue
         seen_now.add(c["id"])
         if author:
@@ -224,18 +284,17 @@ def search_leads(cfg: dict, limit: int = MAX_LEADS) -> list[dict]:
 
 
 def is_client_lead(cfg: dict, text: str) -> bool:
-    """True if the author is looking to get something built (a potential client),
-    not a developer advertising their own services."""
+    """Return whether a post matches the configured live-product buyer."""
+    buyer_context = cfg.get("lead_buyer_context") or DEFAULT_BUYER_CONTEXT
     verdict = llm(
         cfg,
         "Someone posted this online:\n"
         f"{text}\n\n"
-        "Does the author want someone to build software FOR THEM (a potential "
-        "client for a freelance developer)? Answer yes if they are asking for a "
-        "developer, an app, an MVP, or a technical cofounder — even informally or "
-        "offering barter. Answer no ONLY if the author is themselves a "
-        "developer/agency advertising their services, sharing an opinion, or a "
-        "recruiter posting a company job ad.\n"
+        f"Buyer qualification context:\n{buyer_context}\n\n"
+        "Answer yes only when the author is plausibly this buyer and the post "
+        "describes a concrete workflow, automation, or AI feature problem. "
+        "Answer no when the evidence is missing or the post is mainly a job ad, "
+        "service advertisement, or general discussion.\n"
         "Answer with ONLY yes or no.",
         max_tokens=5,
         temperature=0.0,
@@ -244,19 +303,57 @@ def is_client_lead(cfg: dict, text: str) -> bool:
 
 
 def draft_pitch(cfg: dict, lead_text: str) -> str:
-    product = cfg.get("lead_pitch_context", "an independent AI engineer who ships fast")
+    product = cfg.get(
+        "lead_pitch_context",
+        "an independent engineer who ships manual or AI-heavy workflows inside live products",
+    )
     prompt = (
         f"Persona: {cfg['persona']}\n"
-        f"You are {product}.\n\n"
-        f"Someone posted online that they need software built:\n{lead_text}\n\n"
-        f"Draft a SHORT reply (under 200 characters) they'd want to answer: "
-        f"address their specific need, offer one concrete first step or "
-        f"question, no generic sales talk, no links, no hashtags, no emojis. "
-        f"NEVER invent past projects or numbers.\n"
-        f"Reply with ONLY the reply text."
+        f"Background context (do not turn this into a pitch): {product}\n\n"
+        f"Someone posted online about an existing workflow:\n{lead_text}\n\n"
+        "Draft a lowercase reply of up to 280 characters with exactly two "
+        "sentences: first, one specific observation that names or paraphrases "
+        "a detail from their post, never generic advice; second, one diagnostic "
+        "question about why this workflow matters now (what changed, the urgency, "
+        "the volume, or the consequence). Make the question answerable and "
+        "concrete, not 'want help?'.\n"
+        "This is a diagnosis, not a pitch. Do not offer to build anything, "
+        "mention prices or an engagement, suggest a call or DM, include links, "
+        "hashtags, emojis, or generic sales language. Do not mention your "
+        "background or proof unless the post explicitly asks. NEVER invent past "
+        "projects or numbers. Reply with ONLY the reply text."
     )
-    return clean_text(llm(cfg, prompt, max_tokens=150, temperature=0.8,
-                          model=cfg.get("writer_model") or cfg["model"]))
+    for attempt in range(2):
+        draft = clean_text(llm(
+            cfg, prompt, max_tokens=180, temperature=0.8,
+            model=cfg.get("writer_model") or cfg["model"],
+        ))
+        lower = draft.lower()
+        punctuation = re.findall(r"[.!?]", draft)
+        has_forbidden = (
+            any(pattern in lower for pattern in FORBIDDEN_DRAFT_PATTERNS)
+            or "#" in draft
+            or re.search(r"[$€£]\s*\d|\b(?:\d{3,}|five hundred|three thousand)\b", lower)
+        )
+        asks_why_now = (
+            "why" in lower
+            or "what changed" in lower
+            or any(term in lower for term in ("today", "now", "urgent", "volume", "cost"))
+        )
+        if (
+            draft.endswith("?")
+            and punctuation == ["?"]
+            and asks_why_now
+            and not has_forbidden
+        ):
+            return draft
+        prompt += (
+            "\nYour previous draft broke a rule. Rewrite it as exactly two "
+            "sentences: a specific observation from the post, then one question "
+            "about why this workflow matters now. Use one final question mark "
+            "only, with no offer, price, link, hashtag, emoji, or sales language."
+        )
+    return draft
 
 
 def send_lead(token: str, chat_id: str, lead: dict, pitch: str) -> None:
@@ -289,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     for lead in leads:
         pitch = draft_pitch(cfg, lead["text"])
         print(f"lead [{lead['source']}] {lead['url']}: {lead['text'][:80]!r}")
-        print(f"  pitch: {pitch!r}")
+        print(f"  drafted reply: {pitch!r}")
         if args.dry_run:
             continue
         send_lead(token, chat_id, lead, pitch)

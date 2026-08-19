@@ -1,9 +1,8 @@
 name: Daily leads
 
 on:
-  # paused: X API credits exhausted. Restore with:
-  # schedule:
-  #   - cron: "17 07 * * *" # 07:17 UTC daily (09:17/10:17 Romania time)
+  schedule:
+    - cron: "17 07 * * *" # 07:17 UTC daily (09:17/10:17 Romania time)
   workflow_dispatch:
     inputs:
       dry_run:

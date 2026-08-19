@@ -6,7 +6,7 @@ Everything happens in your Telegram chat with the bot. Romania times (UTC+2/+3):
 
 | When | What arrives | What you do |
 |---|---|---|
-| ~09:17/10:17 | **Leads** — up to 5 messages: someone on X / Reddit / Hacker News asking for a developer/app/MVP, with a link and a suggested reply | Open the link, adapt the suggested reply, and answer them from your own account. Or ignore it. |
+| ~09:17/10:17 | **Leads** — up to 5 messages from Reddit / Hacker News: an operator with a live product or business describing a stuck manual, AI-heavy, or automation workflow, with a link and a diagnostic reply | Open the link, adapt the suggested reply, and answer them from your own account. Or ignore it. |
 | ~15:17/16:17 | **Morning briefing** — your last post's metrics, your repo activity, today's HN front page (all linked) | Just read it. |
 | right after | **3 candidate posts** with buttons | Tap `1/2/3` to publish that one, `regenerate` for a fresh batch, or `skip today`. Type your own text instead to post exactly that (it's also saved as a taste example). No answer in 45 min → falls back to the GitHub approve gate. |
 | ~17:47/18:47 | **Quote opportunities** — 2 high-traction posts in your topics, each with a link and a drafted comment | Open the post and quote it yourself with the drafted comment (adapt as you like). Or ignore it. |
@@ -15,8 +15,9 @@ Anytime: **text or voice-note the bot a raw idea** — it lands in the idea inbo
 and the next day's candidates are drafted from your ideas first.
 
 Nothing is ever published without your tap. Tune the voice in `config.json`
-(`persona`, `examples`, `topics`); tune lead hunting with `lead_keywords`,
-`lead_subreddits`, `lead_pitch_context`.
+(`persona`, `examples`, `topics`); tune lead hunting with `lead_sources`,
+`lead_keywords`, `lead_subreddits`, `reddit_need_markers`, `hn_queries`,
+`lead_buyer_context`, and `lead_pitch_context`.
 
 ---
 
@@ -79,16 +80,18 @@ Telegram as draft + link for you to post manually (X's API blocks
 quotes/replies to unengaged conversations at this tier, so the agent never
 publishes). Note: the search endpoint is a paid X API read (~25 tweets/day).
 
-A third daily workflow (`daily-leads.yml`, 07:17 UTC) scouts for clients
-across X (`lead_keywords`, paid search read ~25 tweets/day), Reddit
-(`lead_subreddits` via public RSS, free), and Hacker News (Algolia search,
-free): posts by people asking for a developer/app/MVP are filtered by an LLM
-check that drops developers advertising themselves, deduped against
-`leads.jsonl` (never the same lead twice, nor the same author within 30
-days), and sent to Telegram with the post link and a suggested pitch
-(tuned by `lead_pitch_context`). The agent never replies itself — you
-paste/adapt the pitch from your phone, which also sidesteps the X API
-engagement restrictions.
+A third daily workflow (`daily-leads.yml`, 07:17 UTC) scouts for clients from
+the sources listed in `lead_sources`. The current config uses Reddit
+(`lead_subreddits` via public RSS, free) and Hacker News (Algolia search,
+free), while X remains available as a future source without being called in
+the current run. It looks for operators with a live product or business who
+describe a stuck manual, AI-heavy, or automation workflow. An LLM qualifier
+drops idea-stage MVP shoppers, developers and agencies advertising services,
+recruiters, and general discussion. Matches are deduped against `leads.jsonl`
+(never the same lead twice, nor the same author within 30 days), then sent to
+Telegram with the post link and a diagnostic reply tuned by
+`lead_pitch_context`. The agent never replies itself — you paste/adapt the
+diagnosis from your phone.
 
 One-time setup:
 
